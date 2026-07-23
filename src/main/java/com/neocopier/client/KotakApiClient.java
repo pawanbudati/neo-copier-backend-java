@@ -149,28 +149,85 @@ public class KotakApiClient {
     }
 
     public Map<String, Object> getLimits(Account account) {
-        String baseUrl = getBaseUrl(account);
-        return getRequest(baseUrl + "/limits/v1/margin?segment=ALL&exchange=ALL&product=ALL", account);
+        List<String> candidateBases = List.of(
+                "https://mis.kotaksecurities.com",
+                "https://gw-napi.kotaksecurities.com",
+                "https://napi.kotaksecurities.com",
+                getBaseUrl(account)
+        );
+        List<String> paths = List.of(
+                "/limits/v1/margin?segment=ALL&exchange=ALL&product=ALL",
+                "/quick/user/limits?segment=ALL&exchange=ALL&product=ALL"
+        );
+        for (String base : candidateBases) {
+            if (base == null || base.isEmpty()) continue;
+            String cleanBase = base.replaceAll("/+$", "");
+            for (String path : paths) {
+                try {
+                    Map<String, Object> res = getRequest(cleanBase + path, account);
+                    if (res != null && !res.isEmpty() && !res.containsKey("error") && !res.containsKey("raw")) {
+                        return res;
+                    }
+                } catch (Exception e) {
+                    log.warn("[KotakApiClient] Limits endpoint warning for {}{}: {}", cleanBase, path, e.getMessage());
+                }
+            }
+        }
+        return Collections.emptyMap();
     }
 
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> getPositions(Account account) {
-        String baseUrl = getBaseUrl(account);
-        Map<String, Object> res = getRequest(baseUrl + "/positions/v1/net", account);
-        Object data = res.get("data");
-        if (data instanceof List<?> list) {
-            return (List<Map<String, Object>>) list;
+        List<String> candidateBases = List.of(
+                getBaseUrl(account),
+                "https://mis.kotaksecurities.com",
+                "https://gw-napi.kotaksecurities.com",
+                "https://napi.kotaksecurities.com"
+        );
+        List<String> paths = List.of(
+                "/positions/v1/net",
+                "/quick/user/positions"
+        );
+        for (String base : candidateBases) {
+            if (base == null || base.isEmpty()) continue;
+            String cleanBase = base.replaceAll("/+$", "");
+            for (String path : paths) {
+                try {
+                    Map<String, Object> res = getRequest(cleanBase + path, account);
+                    Object data = res.get("data");
+                    if (data instanceof List<?> list) {
+                        return (List<Map<String, Object>>) list;
+                    }
+                } catch (Exception ignored) {}
+            }
         }
         return Collections.emptyList();
     }
 
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> getOrderBook(Account account) {
-        String baseUrl = getBaseUrl(account);
-        Map<String, Object> res = getRequest(baseUrl + "/orders/v1/orderBook", account);
-        Object data = res.get("data");
-        if (data instanceof List<?> list) {
-            return (List<Map<String, Object>>) list;
+        List<String> candidateBases = List.of(
+                getBaseUrl(account),
+                "https://mis.kotaksecurities.com",
+                "https://gw-napi.kotaksecurities.com",
+                "https://napi.kotaksecurities.com"
+        );
+        List<String> paths = List.of(
+                "/orders/v1/orderBook",
+                "/quick/user/orders"
+        );
+        for (String base : candidateBases) {
+            if (base == null || base.isEmpty()) continue;
+            String cleanBase = base.replaceAll("/+$", "");
+            for (String path : paths) {
+                try {
+                    Map<String, Object> res = getRequest(cleanBase + path, account);
+                    Object data = res.get("data");
+                    if (data instanceof List<?> list) {
+                        return (List<Map<String, Object>>) list;
+                    }
+                } catch (Exception ignored) {}
+            }
         }
         return Collections.emptyList();
     }
@@ -203,16 +260,25 @@ public class KotakApiClient {
     }
 
     public Object getScripMaster(Account account) {
-        String baseUrl = getBaseUrl(account);
-        try {
-            Map<String, Object> res = getRequest(baseUrl + "/scrip_master/v1/file_paths", account);
-            if (res != null && !res.isEmpty() && !res.containsKey("error")) {
-                return res;
+        List<String> candidateBases = List.of(
+                "https://mis.kotaksecurities.com",
+                "https://gw-napi.kotaksecurities.com",
+                "https://napi.kotaksecurities.com",
+                getBaseUrl(account)
+        );
+        for (String base : candidateBases) {
+            if (base == null || base.isEmpty()) continue;
+            String cleanBase = base.replaceAll("/+$", "");
+            try {
+                Map<String, Object> res = getRequest(cleanBase + "/scrip_master/v1/file_paths", account);
+                if (res != null && !res.isEmpty() && !res.containsKey("error") && !res.containsKey("raw")) {
+                    return res;
+                }
+            } catch (Exception e) {
+                log.warn("[KotakApiClient] Scrip master endpoint warning for {}: {}", cleanBase, e.getMessage());
             }
-        } catch (Exception e) {
-            log.warn("[KotakApiClient] /scrip_master/v1/file_paths endpoint warning: {}", e.getMessage());
         }
-        return getRequest(baseUrl + "/scrip_master/v1/", account);
+        return Collections.emptyMap();
     }
 
     private String getBaseUrl(Account account) {
