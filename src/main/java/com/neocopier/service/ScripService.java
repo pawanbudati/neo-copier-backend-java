@@ -251,25 +251,29 @@ public class ScripService {
         LocalDate today = LocalDate.now();
 
         List<Scrip> niftyOptions = downloadAndFilterScrips("nse_fo", activeAccount, scrip -> {
+            if (scrip == null) return false;
             String sym = scrip.getTradingSymbol() != null ? scrip.getTradingSymbol().toUpperCase() : "";
             String inst = scrip.getInstrumentName() != null ? scrip.getInstrumentName().toUpperCase() : "";
             String ref = scrip.getScripRefKey() != null ? scrip.getScripRefKey().toUpperCase() : "";
             
             boolean isNifty = sym.contains("NIFTY") || inst.contains("NIFTY") || ref.contains("NIFTY");
-            boolean isOption = "CE".equalsIgnoreCase(scrip.getSegment()) || "PE".equalsIgnoreCase(scrip.getSegment()) || inst.contains("OPT");
-            boolean isNotExpired = scrip.getExpiry() != null && !scrip.getExpiry().isBefore(today);
+            boolean isOption = "CE".equalsIgnoreCase(scrip.getSegment()) || "PE".equalsIgnoreCase(scrip.getSegment()) ||
+                               inst.contains("OPT") || sym.endsWith("CE") || sym.endsWith("PE");
+            boolean isNotExpired = scrip.getExpiry() == null || !scrip.getExpiry().isBefore(today);
 
             return isNifty && isOption && isNotExpired;
         });
 
         List<Scrip> sensexOptions = downloadAndFilterScrips("bse_fo", activeAccount, scrip -> {
+            if (scrip == null) return false;
             String sym = scrip.getTradingSymbol() != null ? scrip.getTradingSymbol().toUpperCase() : "";
             String inst = scrip.getInstrumentName() != null ? scrip.getInstrumentName().toUpperCase() : "";
             String ref = scrip.getScripRefKey() != null ? scrip.getScripRefKey().toUpperCase() : "";
 
             boolean isSensex = sym.contains("SENSEX") || sym.contains("BSX") || inst.contains("SENSEX") || ref.contains("SENSEX");
-            boolean isOption = "CE".equalsIgnoreCase(scrip.getSegment()) || "PE".equalsIgnoreCase(scrip.getSegment()) || inst.contains("OPT");
-            boolean isNotExpired = scrip.getExpiry() != null && !scrip.getExpiry().isBefore(today);
+            boolean isOption = "CE".equalsIgnoreCase(scrip.getSegment()) || "PE".equalsIgnoreCase(scrip.getSegment()) ||
+                               inst.contains("OPT") || sym.endsWith("CE") || sym.endsWith("PE");
+            boolean isNotExpired = scrip.getExpiry() == null || !scrip.getExpiry().isBefore(today);
 
             return isSensex && isOption && isNotExpired;
         });
@@ -326,10 +330,14 @@ public class ScripService {
 
         for (String targetUrl : candidateUrls) {
             try {
+                log.info("[ScripMaster] Downloading {} scrip master from {}", categoryKey, targetUrl);
                 HttpRequest request = HttpRequest.newBuilder().uri(URI.create(targetUrl)).GET().build();
                 HttpResponse<java.io.InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
 
-                if (response.statusCode() != 200) continue;
+                if (response.statusCode() != 200) {
+                    log.warn("[ScripMaster] Non-200 HTTP status {} from {}", response.statusCode(), targetUrl);
+                    continue;
+                }
 
                 List<Scrip> filtered = new ArrayList<>();
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body()))) {
@@ -338,21 +346,33 @@ public class ScripService {
                         String[] headers = headerLine.replace("\ufeff", "").split(",");
                         String line;
                         while ((line = reader.readLine()) != null) {
-                            String[] parts = line.split(",");
+                            if (line.trim().isEmpty()) continue;
+                            String[] parts = line.split(",", -1);
                             Map<String, String> row = new HashMap<>();
                             for (int i = 0; i < Math.min(headers.length, parts.length); i++) {
-                                row.put(headers[i].trim(), parts[i].trim());
+                                String hKey = headers[i] != null ? headers[i].trim() : "";
+                                String pVal = parts[i] != null ? parts[i].trim() : "";
+                                if (!hKey.isEmpty()) {
+                                    row.put(hKey, pVal);
+                                }
                             }
-                            Scrip scrip = ScripParser.parseRow(row);
-                            if (scrip != null && filterPredicate.test(scrip)) {
-                                filtered.add(scrip);
+                            try {
+                                Scrip scrip = ScripParser.parseRow(row);
+                                if (scrip != null && filterPredicate.test(scrip)) {
+                                    filtered.add(scrip);
+                                }
+                            } catch (Exception parseEx) {
+                                // Ignore single bad row
                             }
                         }
                     }
                 }
-                return filtered;
+                log.info("[ScripMaster] Successfully parsed and filtered {} scrips from {}", filtered.size(), targetUrl);
+                if (!filtered.isEmpty()) {
+                    return filtered;
+                }
             } catch (Exception e) {
-                log.warn("[ScripMaster] Error downloading/parsing {}: {}", targetUrl, e.getMessage());
+                log.warn("[ScripMaster] Error downloading/parsing {}: {}", targetUrl, e.toString(), e);
             }
         }
         return Collections.emptyList();
