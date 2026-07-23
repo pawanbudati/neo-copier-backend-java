@@ -45,10 +45,10 @@ public class Account {
     @Column(length = 4096, columnDefinition = "TEXT")
     private String rid;
 
-    @Column(name = "hsserverid")
+    @Column(name = "hsserverid", length = 4096, columnDefinition = "TEXT")
     private String hsServerId;
 
-    @Column(name = "datacenter")
+    @Column(name = "datacenter", length = 4096, columnDefinition = "TEXT")
     private String dataCenter;
 
     @Column(name = "baseurl", length = 4096, columnDefinition = "TEXT")

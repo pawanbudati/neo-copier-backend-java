@@ -38,7 +38,7 @@ public class AccountService {
     @PostConstruct
     @Transactional
     public void alterTableColumns() {
-        String[] columns = {"accesstoken", "neotoken", "sid", "rid", "consumerkey", "totpsecret", "errormessage", "baseurl"};
+        String[] columns = {"accesstoken", "neotoken", "sid", "rid", "consumerkey", "totpsecret", "errormessage", "baseurl", "hsserverid", "datacenter"};
         for (String col : columns) {
             try {
                 entityManager.createNativeQuery("ALTER TABLE accounts ALTER COLUMN " + col + " TYPE TEXT").executeUpdate();
