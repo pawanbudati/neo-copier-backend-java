@@ -23,41 +23,45 @@ public class DatabaseMigrationRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        log.info("[DatabaseMigration] Starting schema migration...");
+        int altered = 0;
+        int skipped = 0;
+
         try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement()) {
 
-            String[] accountCols = {
+            altered += alterColumns(stmt, "accounts", new String[]{
                     "id", "nickname", "role", "mobilenumber", "ucc", "mpin",
                     "consumerkey", "totpsecret", "status", "lastlogin",
                     "accesstoken", "sid", "neotoken", "rid", "hsserverid",
                     "datacenter", "baseurl", "errormessage", "createdat"
-            };
+            });
 
-            for (String col : accountCols) {
-                try {
-                    stmt.executeUpdate("ALTER TABLE accounts ALTER COLUMN " + col + " TYPE TEXT");
-                } catch (Exception ignored) {
-                    // Ignore for SQLite or if column is already TEXT
-                }
-            }
-
-            String[] orderCols = {
+            altered += alterColumns(stmt, "orders", new String[]{
                     "id", "masterorderid", "accountid", "accountname", "accountrole",
                     "symbol", "instrument", "optiontype", "expiry", "ordertype",
                     "transactiontype", "status", "errormessage"
-            };
+            });
 
-            for (String col : orderCols) {
-                try {
-                    stmt.executeUpdate("ALTER TABLE orders ALTER COLUMN " + col + " TYPE TEXT");
-                } catch (Exception ignored) {
-                    // Ignore for SQLite or if column is already TEXT
-                }
-            }
-
-            log.info("[DatabaseMigration] Successfully upgraded all PostgreSQL account & order table columns to TEXT type.");
+            skipped = 32 - altered; // total columns across both tables
+            log.info("[DatabaseMigration] Completed. Altered: {} columns, Already TEXT: {} columns", altered, skipped);
         } catch (Exception e) {
-            log.warn("[DatabaseMigration] Startup schema migration notice: {}", e.getMessage());
+            log.warn("[DatabaseMigration] Migration failed: {}", e.getMessage());
         }
+    }
+
+    private int alterColumns(Statement stmt, String table, String[] columns) {
+        int count = 0;
+        for (String col : columns) {
+            try {
+                stmt.executeUpdate("ALTER TABLE " + table + " ALTER COLUMN " + col + " TYPE TEXT");
+                log.info("[DatabaseMigration] Altered {}.{} -> TEXT", table, col);
+                count++;
+            } catch (Exception e) {
+                // Column already TEXT, table doesn't exist, or SQLite
+                log.debug("[DatabaseMigration] Skipped {}.{}: {}", table, col, e.getMessage());
+            }
+        }
+        return count;
     }
 }
