@@ -35,20 +35,6 @@ public class AccountService {
         this.kotakApiClient = kotakApiClient;
     }
 
-    @PostConstruct
-    @Transactional
-    public void alterTableColumns() {
-        String[] columns = {"accesstoken", "neotoken", "sid", "rid", "consumerkey", "totpsecret", "errormessage", "baseurl", "hsserverid", "datacenter"};
-        for (String col : columns) {
-            try {
-                entityManager.createNativeQuery("ALTER TABLE accounts ALTER COLUMN " + col + " TYPE TEXT").executeUpdate();
-            } catch (Exception e) {
-                // Ignore if DB dialect doesn't use standard ALTER or column is already TEXT
-            }
-        }
-        log.info("[AccountService] Verified account table column types for long JWT tokens.");
-    }
-
     public List<Account> getAllAccounts() {
         return accountRepository.findAll();
     }
