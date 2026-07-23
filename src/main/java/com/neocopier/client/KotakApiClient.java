@@ -38,13 +38,15 @@ public class KotakApiClient {
         String totpSecret = account.getTotpSecret();
         String mpin = account.getMpin();
 
-        if (totpSecret == null || totpSecret.trim().isEmpty()) {
-            throw new RuntimeException("TOTP secret is required for account authentication.");
-        }
-
-        String totpCode = com.neocopier.util.TotpUtils.generateTotp(totpSecret);
+        String totpCode = null;
         if (manualOtp != null && !manualOtp.trim().isEmpty()) {
             totpCode = manualOtp.trim();
+        } else if (totpSecret != null && !totpSecret.trim().isEmpty()) {
+            totpCode = com.neocopier.util.TotpUtils.generateTotp(totpSecret);
+        }
+
+        if (totpCode == null || totpCode.trim().isEmpty()) {
+            throw new RuntimeException("TOTP secret or manual OTP is required for account authentication.");
         }
 
         Map<String, Object> payload1 = Map.of(

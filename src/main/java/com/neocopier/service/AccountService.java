@@ -72,6 +72,20 @@ public class AccountService {
         if (account.getId() == null || account.getId().isEmpty()) {
             account.setId("ACC_" + System.currentTimeMillis() + "_" + (new Random().nextInt(900) + 100));
             account.setCreatedAt(LocalDateTime.now().toString());
+        } else {
+            Optional<Account> existingOpt = accountRepository.findById(account.getId());
+            if (existingOpt.isPresent()) {
+                Account existing = existingOpt.get();
+                if (account.getTotpSecret() == null || account.getTotpSecret().trim().isEmpty()) {
+                    account.setTotpSecret(existing.getTotpSecret());
+                }
+                if (account.getMpin() == null || account.getMpin().trim().isEmpty()) {
+                    account.setMpin(existing.getMpin());
+                }
+                if (account.getConsumerKey() == null || account.getConsumerKey().trim().isEmpty()) {
+                    account.setConsumerKey(existing.getConsumerKey());
+                }
+            }
         }
 
         if (account.getTotpSecret() != null) {
