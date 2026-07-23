@@ -10,6 +10,7 @@ import java.util.regex.Pattern;
 
 public class ScripParser {
 
+    private static final Pattern SCRIP_REF_EXPIRY_PATTERN = Pattern.compile("(\\d{2})([A-Z]{3})(\\d{2})");
     private static final Map<String, Integer> MONTH_MAP = Map.ofEntries(
             Map.entry("JAN", 1), Map.entry("FEB", 2), Map.entry("MAR", 3), Map.entry("APR", 4),
             Map.entry("MAY", 5), Map.entry("JUN", 6), Map.entry("JUL", 7), Map.entry("AUG", 8),
@@ -65,101 +66,83 @@ public class ScripParser {
         return "";
     }
 
+    /**
+     * Exact expiry date parsing logic matching python backend app/scrips.py:parse_expiry_date
+     */
     public static LocalDate parseExpiryDate(Map<String, String> row) {
-        String raw = getField(row, List.of("pexpirydate", "expirydate", "expiry_date", "expiry", "exp_date", "expirydatetime", "expiry_time"));
+        // 1. Match from scripRefKey regex (e.g. 30JUL26 or 26JUL24)
         String scripRef = getField(row, List.of("pscriprefkey", "scriprefkey", "scrip_ref_key")).toUpperCase();
-        String trdSym = getField(row, List.of("ptrdsymbol", "trdsymbol", "tradingsymbol", "trading_symbol")).toUpperCase();
-
-        // 1. Try parsing raw expiry field
-        if (raw != null && !raw.trim().isEmpty()) {
-            String trimmed = raw.trim();
-            // Check numeric epoch
-            if (trimmed.matches("-?\\d+")) {
+        Matcher matcher = SCRIP_REF_EXPIRY_PATTERN.matcher(scripRef);
+        if (matcher.find()) {
+            String day = matcher.group(1);
+            String monthName = matcher.group(2);
+            String year = matcher.group(3);
+            Integer month = MONTH_MAP.get(monthName);
+            if (month != null) {
                 try {
-                    long val = Long.parseLong(trimmed);
-                    if (val > 0) {
-                        long epochSec = val > 10_000_000_000L ? val / 1000 : val;
-                        return java.time.Instant.ofEpochSecond(epochSec).atZone(java.time.ZoneId.systemDefault()).toLocalDate();
-                    }
-                } catch (Exception ignored) {}
-            }
-            // Try common date formatters
-            List<DateTimeFormatter> formatters = List.of(
-                    DateTimeFormatter.ISO_LOCAL_DATE, // 2026-07-30
-                    DateTimeFormatter.ofPattern("dd-MMM-yyyy", Locale.ENGLISH), // 30-Jul-2026 / 30-JUL-2026
-                    DateTimeFormatter.ofPattern("dd-MMM-yy", Locale.ENGLISH), // 30-JUL-26
-                    DateTimeFormatter.ofPattern("dd/MM/yyyy"), // 30/07/2026
-                    DateTimeFormatter.ofPattern("ddMMyyyy"), // 30072026
-                    DateTimeFormatter.ofPattern("yyyyMMdd"), // 20260730
-                    DateTimeFormatter.ofPattern("ddMMMyyyy", Locale.ENGLISH) // 30JUL2026
-            );
-            String upperRaw = trimmed.substring(0, Math.min(trimmed.length(), 11)).toUpperCase();
-            for (DateTimeFormatter fmt : formatters) {
-                try {
-                    return LocalDate.parse(upperRaw, fmt);
+                    return LocalDate.of(2000 + Integer.parseInt(year), month, Integer.parseInt(day));
                 } catch (Exception ignored) {}
             }
         }
 
-        // 2. Try parsing from scripRef or tradingSymbol using regex
-        String textToSearch = (scripRef + " " + trdSym).toUpperCase();
-
-        // Match DDMMMYY or DDMMMYYYY (e.g. 30JUL26 or 30JUL2026)
-        Matcher m1 = Pattern.compile("(\\d{2})([A-Z]{3})(\\d{2,4})").matcher(textToSearch);
-        if (m1.find()) {
-            String dayStr = m1.group(1);
-            String monthStr = m1.group(2);
-            String yearStr = m1.group(3);
-            Integer month = MONTH_MAP.get(monthStr);
-            if (month != null) {
-                try {
-                    int day = Integer.parseInt(dayStr);
-                    int year = Integer.parseInt(yearStr);
-                    if (year < 100) year += 2000;
-                    return LocalDate.of(year, month, day);
-                } catch (Exception ignored) {}
-            }
+        // 2. Parse raw pExpiryDate field
+        String raw = getField(row, List.of("pexpirydate", "expirydate", "expiry_date", "expiry", "exp_date", "expirydatetime"));
+        if (raw.isEmpty()) {
+            return null;
         }
 
-        // Match YYMMM (e.g. 26JUL for year 2026 month July)
-        Matcher m2 = Pattern.compile("(\\d{2})([A-Z]{3})").matcher(textToSearch);
-        if (m2.find()) {
-            String yearStr = m2.group(1);
-            String monthStr = m2.group(2);
-            Integer month = MONTH_MAP.get(monthStr);
-            if (month != null) {
-                try {
-                    int year = 2000 + Integer.parseInt(yearStr);
-                    return LocalDate.of(year, month, 1).plusMonths(1).minusDays(1);
-                } catch (Exception ignored) {}
+        try {
+            // Epoch seconds / milliseconds
+            if (raw.matches("-?\\d+")) {
+                long stamp = Long.parseLong(raw) / (raw.length() == 13 ? 1000 : 1);
+                return java.time.Instant.ofEpochSecond(stamp).atZone(java.time.ZoneId.systemDefault()).toLocalDate();
             }
+            // ISO date string (YYYY-MM-DD...)
+            if (raw.length() >= 10) {
+                return LocalDate.parse(raw.substring(0, 10));
+            }
+        } catch (Exception ignored) {}
+
+        // 3. Fallback formatters (e.g. 30-Jul-2026, 30-JUL-26, 30/07/2026)
+        List<DateTimeFormatter> formatters = List.of(
+                DateTimeFormatter.ofPattern("dd-MMM-yyyy", Locale.ENGLISH),
+                DateTimeFormatter.ofPattern("dd-MMM-yy", Locale.ENGLISH),
+                DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+                DateTimeFormatter.ofPattern("ddMMyyyy")
+        );
+        String upperRaw = raw.toUpperCase();
+        for (DateTimeFormatter fmt : formatters) {
+            try {
+                return LocalDate.parse(upperRaw, fmt);
+            } catch (Exception ignored) {}
         }
 
         return null;
     }
 
+    /**
+     * Exact row parsing matching python backend app/scrips.py:parse_raw_row
+     */
     public static Scrip parseRow(Map<String, String> row) {
-        String token = getField(row, List.of("ptoken", "token", "scriptoken", "script_token", "tokenid", "instrument_token", "psymbol"));
-        String tradingSymbol = getField(row, List.of("ptrdsymbol", "trdsymbol", "tradingsymbol", "trading_symbol", "psymbolname", "symbolname", "symbol"));
+        String token = getField(row, List.of("psymbol", "ptoken", "token", "scriptoken", "script_token", "scripttoken", "script token", "tokenid", "token_id", "instrument_token"));
+        String tradingSymbol = getField(row, List.of("ptrdsymbol", "trdsymbol", "tradingsymbol", "trading_symbol", "psymbol", "symbol", "symbolname", "symbol_name"));
         if (token.isEmpty() || tradingSymbol.isEmpty()) {
             return null;
         }
         String scripRef = getField(row, List.of("pscriprefkey", "scriprefkey", "scrip_ref_key"));
-        String instrumentName = getField(row, List.of("psymname", "symname", "symbol_name", "pinstname", "instrument_name", "instrumentname"));
+        String instrumentName = getField(row, List.of("psymname", "symname", "symbol_name", "pinstname", "instrument_name", "instrumentname", "instname"));
         if (instrumentName.isEmpty()) {
             instrumentName = tradingSymbol;
         }
-        String exchangeRaw = getField(row, List.of("pexchseg", "exchseg", "exchange_segment", "pexchange", "exchange", "segment"));
+        String exchangeRaw = getField(row, List.of("pexchseg", "exchseg", "exchange_segment", "pexchange", "exchange", "segment", "segmentname"));
         String optionType = getField(row, List.of("poptiontype", "optiontype", "option_type", "opt_type"));
-        String strikeRaw = getField(row, List.of("pstrikeprice", "strikeprice", "strike_price", "strike", "dstrikeprice"));
-        String lotRaw = getField(row, List.of("ilotsize", "llotsize", "plotsize", "lotsize", "lot_size", "boardlotqty"));
+        String strikeRaw = getField(row, List.of("pstrikeprice", "strikeprice", "strike_price", "strike", "dstrikeprice;", "dstrikeprice"));
+        String lotRaw = getField(row, List.of("ilotsize", "llotsize", "iboardlotqty", "plotsize", "lotsize", "lot_size", "boardlotqty", "boardlotquantity", "lotqty"));
 
         double strike = 0.0;
         try {
             strike = Double.parseDouble(strikeRaw);
-            if (strike > 0 && strikeRaw.length() > 6 && !strikeRaw.contains(".")) {
-                strike = strike / 100.0;
-            }
+            if (strike > 0) strike = strike / 100.0;
         } catch (NumberFormatException ignored) {}
 
         int lotSize = 1;
