@@ -41,6 +41,7 @@ public class DataSourceConfig {
                 String host = uri.getHost();
                 int port = uri.getPort() != -1 ? uri.getPort() : 5432;
                 String path = uri.getPath();
+                String query = uri.getQuery();
 
                 String userInfo = uri.getUserInfo();
                 String username = "";
@@ -52,7 +53,13 @@ public class DataSourceConfig {
                     password = URLDecoder.decode(parts[1], StandardCharsets.UTF_8);
                 }
 
-                String jdbcUrl = String.format("jdbc:postgresql://%s:%d%s", host, port, path);
+                String paramDelimiter = (query != null && !query.isEmpty()) ? "&" : "?";
+                String existingQuery = (query != null && !query.isEmpty()) ? "?" + query : "";
+                
+                // Add prepareThreshold=0 to fix Supabase/PgBouncer 'ERROR: prepared statement S_xx already exists'
+                String jdbcUrl = String.format("jdbc:postgresql://%s:%d%s%s%sprepareThreshold=0", 
+                        host, port, path, existingQuery, paramDelimiter);
+                
                 log.info("[Database] Connecting to PostgreSQL at {}", jdbcUrl);
 
                 return DataSourceBuilder.create()
@@ -68,10 +75,12 @@ public class DataSourceConfig {
         }
 
         if (dbUrl != null && dbUrl.startsWith("jdbc:postgresql://")) {
-            log.info("[Database] Using JDBC PostgreSQL URL: {}", dbUrl);
+            String paramDelimiter = dbUrl.contains("?") ? "&" : "?";
+            String jdbcUrl = dbUrl.contains("prepareThreshold=") ? dbUrl : dbUrl + paramDelimiter + "prepareThreshold=0";
+            log.info("[Database] Using JDBC PostgreSQL URL: {}", jdbcUrl);
             return DataSourceBuilder.create()
                     .driverClassName("org.postgresql.Driver")
-                    .url(dbUrl)
+                    .url(jdbcUrl)
                     .build();
         }
 
