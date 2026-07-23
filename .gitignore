@@ -1,0 +1,34 @@
+# Maven Build Output
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# Maven Wrapper binaries downloaded locally
+.mvn/apache-maven-*/
+.mvn/*.zip
+.mvn/wrapper/maven-wrapper.jar
+
+# Application Data & Logs
+data/
+*.log
+*.db
+scrip-master-raw/
+scrip-master-files/
+
+# Environment & Credentials
+.env
+.env.local
+*.env
+
+# IDE & Editor files
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+bin/
+.DS_Store
+Thumbs.db
