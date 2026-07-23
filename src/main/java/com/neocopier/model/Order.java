@@ -48,7 +48,7 @@ public class Order {
 
     private String status;
 
-    @Column(name = "errormessage", length = 1000)
+    @Column(name = "errormessage", columnDefinition = "TEXT")
     private String errorMessage;
 
     private String timestamp;

@@ -33,14 +33,16 @@ public class Account {
     @Column(name = "lastlogin")
     private String lastLogin;
 
-    @Column(name = "accesstoken")
+    @Column(name = "accesstoken", columnDefinition = "TEXT")
     private String accessToken;
 
+    @Column(columnDefinition = "TEXT")
     private String sid;
 
-    @Column(name = "neotoken")
+    @Column(name = "neotoken", columnDefinition = "TEXT")
     private String neoToken;
 
+    @Column(columnDefinition = "TEXT")
     private String rid;
 
     @Column(name = "hsserverid")
@@ -52,7 +54,7 @@ public class Account {
     @Column(name = "baseurl")
     private String baseUrl;
 
-    @Column(name = "errormessage", length = 1000)
+    @Column(name = "errormessage", columnDefinition = "TEXT")
     private String errorMessage;
 
     @Column(name = "createdat")
