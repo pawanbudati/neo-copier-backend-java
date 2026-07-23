@@ -21,10 +21,16 @@ jobs:
           cache: 'maven'
 
       - name: Make Maven wrapper executable
-        run: chmod +x mvnw
+        run: chmod +x mvnw || true
 
       - name: Build Spring Boot Application
-        run: ./mvnw clean package -DskipTests
+        run: |
+          if [ -f "./mvnw" ]; then
+            chmod +x ./mvnw
+            ./mvnw clean package -DskipTests
+          else
+            mvn clean package -DskipTests
+          fi
 
       - name: Execute Deploy Commands via SSH on GCP VM
         uses: appleboy/ssh-action@master
@@ -54,11 +60,16 @@ jobs:
               sudo apt-get install -y openjdk-21-jdk
             fi
 
-            # Grant execution permission to Maven wrapper
-            chmod +x mvnw
-
             # Build Spring Boot Executable JAR
-            ./mvnw clean package -DskipTests
+            if [ -f "./mvnw" ]; then
+              chmod +x ./mvnw
+              ./mvnw clean package -DskipTests
+            elif command -v mvn &> /dev/null; then
+              mvn clean package -DskipTests
+            else
+              sudo apt-get update && sudo apt-get install -y maven
+              mvn clean package -DskipTests
+            fi
 
             # Restart backend process in PM2
             pm2 delete neo-copier-backend-java || true
