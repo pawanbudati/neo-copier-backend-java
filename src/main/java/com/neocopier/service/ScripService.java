@@ -32,12 +32,12 @@ public class ScripService {
     private static final Logger log = LoggerFactory.getLogger(ScripService.class);
 
     private static final Map<String, List<String>> FALLBACK_SCRIP_URLS = Map.of(
-            "nse_cm", List.of("https://file.kotaksecurities.com/scrip_master/nse_cm.csv", "https://lapi.kotaksecurities.com/nest_stream/script_master/nse_cm.csv"),
-            "nse_fo", List.of("https://file.kotaksecurities.com/scrip_master/nse_fo.csv", "https://lapi.kotaksecurities.com/nest_stream/script_master/nse_fo.csv"),
-            "bse_fo", List.of("https://file.kotaksecurities.com/scrip_master/bse_fo.csv", "https://lapi.kotaksecurities.com/nest_stream/script_master/bse_fo.csv"),
-            "bse_cm", List.of("https://file.kotaksecurities.com/scrip_master/bse_cm.csv", "https://lapi.kotaksecurities.com/nest_stream/script_master/bse_cm.csv"),
-            "mcx_fo", List.of("https://file.kotaksecurities.com/scrip_master/mcx_fo.csv", "https://lapi.kotaksecurities.com/nest_stream/script_master/mcx_fo.csv"),
-            "cde_fo", List.of("https://file.kotaksecurities.com/scrip_master/cde_fo.csv", "https://lapi.kotaksecurities.com/nest_stream/script_master/cde_fo.csv")
+            "nse_cm", List.of("https://csec-master.kotaksecurities.com/scrip_master/nse_cm.csv", "https://content.kotaksecurities.com/scrip_master/nse_cm.csv"),
+            "nse_fo", List.of("https://csec-master.kotaksecurities.com/scrip_master/nse_fo.csv", "https://content.kotaksecurities.com/scrip_master/nse_fo.csv"),
+            "bse_fo", List.of("https://csec-master.kotaksecurities.com/scrip_master/bse_fo.csv", "https://content.kotaksecurities.com/scrip_master/bse_fo.csv"),
+            "bse_cm", List.of("https://csec-master.kotaksecurities.com/scrip_master/bse_cm.csv", "https://content.kotaksecurities.com/scrip_master/bse_cm.csv"),
+            "mcx_fo", List.of("https://csec-master.kotaksecurities.com/scrip_master/mcx_fo.csv", "https://content.kotaksecurities.com/scrip_master/mcx_fo.csv"),
+            "cde_fo", List.of("https://csec-master.kotaksecurities.com/scrip_master/cde_fo.csv", "https://content.kotaksecurities.com/scrip_master/cde_fo.csv")
     );
 
     private final ScripRepository scripRepository;
