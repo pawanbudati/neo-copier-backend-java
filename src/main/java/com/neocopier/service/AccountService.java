@@ -40,7 +40,21 @@ public class AccountService {
     }
 
     public Optional<Account> getFirstActiveAccount() {
-        return getActiveAccounts().stream().filter(a -> a.getConsumerKey() != null && !a.getConsumerKey().isEmpty()).findFirst();
+        Optional<Account> activeOpt = getActiveAccounts().stream().filter(a -> a.getConsumerKey() != null && !a.getConsumerKey().isEmpty()).findFirst();
+        if (activeOpt.isPresent()) {
+            return activeOpt;
+        }
+        List<Account> all = accountRepository.findAll();
+        for (Account acc : all) {
+            if (acc.getTotpSecret() != null && !acc.getTotpSecret().trim().isEmpty() && acc.getConsumerKey() != null && !acc.getConsumerKey().trim().isEmpty()) {
+                log.info("[Account] Attempting auto-login for scrip master fetch on account: {}", acc.getNickname());
+                Map<String, Object> res = loginAccount(acc.getId(), null);
+                if (Boolean.TRUE.equals(res.get("success"))) {
+                    return accountRepository.findById(acc.getId());
+                }
+            }
+        }
+        return Optional.empty();
     }
 
     public Account saveAccount(Account account) {
