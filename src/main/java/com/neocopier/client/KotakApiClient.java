@@ -49,31 +49,38 @@ public class KotakApiClient {
             throw new RuntimeException("TOTP secret or manual OTP is required for account authentication.");
         }
 
+        String formattedMobile = normalizeMobileNumber(account.getMobileNumber());
+        String ucc = account.getUcc() != null ? account.getUcc().trim() : "";
+
         Map<String, Object> payload1 = Map.of(
-                "mobileNumber", account.getMobileNumber() != null ? account.getMobileNumber() : "",
-                "ucc", account.getUcc() != null ? account.getUcc() : "",
+                "mobileNumber", formattedMobile,
+                "ucc", ucc,
                 "totp", totpCode
         );
 
+        log.info("[KotakApiClient] Authenticating Step 1 for UCC: {} on mobile: {}", ucc, formattedMobile);
         Map<String, Object> step1Res = postRequest(baseUrl + "/oauth2/token", payload1, account.getConsumerKey(), null, null);
         String token = (String) step1Res.get("token");
         String sid = (String) step1Res.get("sid");
 
         if (token == null || sid == null) {
-            String err = (String) step1Res.getOrDefault("message", step1Res.getOrDefault("error", "TOTP authentication failed"));
+            log.warn("[KotakApiClient] Step 1 TOTP response error: {}", step1Res);
+            String err = extractErrorMessage(step1Res, "TOTP authentication failed. Check Mobile Number (+91 format), UCC, and 6-digit TOTP code.");
             throw new RuntimeException(err);
         }
 
         Map<String, Object> payload2 = Map.of(
-                "mpin", mpin != null ? mpin : ""
+                "mpin", mpin != null ? mpin.trim() : ""
         );
 
+        log.info("[KotakApiClient] Authenticating Step 2 MPIN for UCC: {}", ucc);
         Map<String, Object> step2Res = postRequest(baseUrl + "/oauth2/token/mpin", payload2, account.getConsumerKey(), sid, token);
         String neoToken = (String) step2Res.get("token");
         String hsServerId = (String) step2Res.get("hsServerId");
 
         if (neoToken == null) {
-            String err = (String) step2Res.getOrDefault("message", step2Res.getOrDefault("error", "MPIN authentication failed"));
+            log.warn("[KotakApiClient] Step 2 MPIN response error: {}", step2Res);
+            String err = extractErrorMessage(step2Res, "MPIN authentication failed. Check 4-digit MPIN.");
             throw new RuntimeException(err);
         }
 
@@ -218,5 +225,32 @@ public class KotakApiClient {
             errMap.put("error", e.getMessage());
             return errMap;
         }
+    }
+
+    private String normalizeMobileNumber(String mobileNumber) {
+        if (mobileNumber == null) return "";
+        String trimmed = mobileNumber.trim();
+        if (trimmed.startsWith("+")) {
+            return trimmed;
+        }
+        String digits = trimmed.replaceAll("\\D+", "");
+        if (digits.length() == 10) {
+            return "+91" + digits;
+        }
+        if (digits.length() == 12 && digits.startsWith("91")) {
+            return "+" + digits;
+        }
+        return trimmed;
+    }
+
+    private String extractErrorMessage(Map<String, Object> resMap, String fallback) {
+        if (resMap == null || resMap.isEmpty()) return fallback;
+        if (resMap.get("message") instanceof String msg && !msg.isEmpty()) return msg;
+        if (resMap.get("error") instanceof String err && !err.isEmpty()) return err;
+        if (resMap.get("data") instanceof Map<?, ?> dataMap) {
+            if (dataMap.get("message") instanceof String msg && !msg.isEmpty()) return msg;
+            if (dataMap.get("error") instanceof String err && !err.isEmpty()) return err;
+        }
+        return fallback;
     }
 }

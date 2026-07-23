@@ -51,7 +51,9 @@ public class AccountController {
                                                             @RequestBody(required = false) Map<String, String> body) {
         String manualOtp = body != null ? body.get("manualOtp") : null;
         Map<String, Object> res = accountService.loginAccount(accountId, manualOtp);
-        feedService.connectMarketFeed();
+        if (Boolean.TRUE.equals(res.get("success"))) {
+            feedService.connectMarketFeed();
+        }
         return ResponseEntity.ok(res);
     }
 
