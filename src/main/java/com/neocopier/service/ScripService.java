@@ -246,6 +246,118 @@ public class ScripService {
         return Map.of("loaded", totalCount > 0, "totalCount", totalCount, "categories", categories);
     }
 
+    public Map<String, Object> loadDailyIndexOptions(Account activeAccount) {
+        log.info("[ScripMaster] Loading daily Nifty & Sensex index options (Filtering past expiries)...");
+        LocalDate today = LocalDate.now();
+
+        List<Scrip> niftyOptions = downloadAndFilterScrips("nse_fo", activeAccount, scrip -> {
+            String sym = scrip.getTradingSymbol() != null ? scrip.getTradingSymbol().toUpperCase() : "";
+            String inst = scrip.getInstrumentName() != null ? scrip.getInstrumentName().toUpperCase() : "";
+            String ref = scrip.getScripRefKey() != null ? scrip.getScripRefKey().toUpperCase() : "";
+            
+            boolean isNifty = sym.contains("NIFTY") || inst.contains("NIFTY") || ref.contains("NIFTY");
+            boolean isOption = "CE".equalsIgnoreCase(scrip.getSegment()) || "PE".equalsIgnoreCase(scrip.getSegment()) || inst.contains("OPT");
+            boolean isNotExpired = scrip.getExpiry() != null && !scrip.getExpiry().isBefore(today);
+
+            return isNifty && isOption && isNotExpired;
+        });
+
+        List<Scrip> sensexOptions = downloadAndFilterScrips("bse_fo", activeAccount, scrip -> {
+            String sym = scrip.getTradingSymbol() != null ? scrip.getTradingSymbol().toUpperCase() : "";
+            String inst = scrip.getInstrumentName() != null ? scrip.getInstrumentName().toUpperCase() : "";
+            String ref = scrip.getScripRefKey() != null ? scrip.getScripRefKey().toUpperCase() : "";
+
+            boolean isSensex = sym.contains("SENSEX") || sym.contains("BSX") || inst.contains("SENSEX") || ref.contains("SENSEX");
+            boolean isOption = "CE".equalsIgnoreCase(scrip.getSegment()) || "PE".equalsIgnoreCase(scrip.getSegment()) || inst.contains("OPT");
+            boolean isNotExpired = scrip.getExpiry() != null && !scrip.getExpiry().isBefore(today);
+
+            return isSensex && isOption && isNotExpired;
+        });
+
+        // Clear ALL existing scrips from DB before saving fresh filtered index options
+        scripRepository.deleteAll();
+
+        List<Scrip> allNewScrips = new ArrayList<>();
+        allNewScrips.addAll(niftyOptions);
+        allNewScrips.addAll(sensexOptions);
+
+        if (!allNewScrips.isEmpty()) {
+            scripRepository.saveAll(allNewScrips);
+        }
+
+        // Clear RAM cache and reload freshly from DB
+        int cachedCount = populateMemoryCache();
+        log.info("[ScripMaster] Daily index options loaded. Nifty: {}, Sensex: {}. Total in RAM: {}",
+                niftyOptions.size(), sensexOptions.size(), cachedCount);
+
+        return Map.of(
+                "success", true,
+                "niftyCount", niftyOptions.size(),
+                "sensexCount", sensexOptions.size(),
+                "totalCount", cachedCount
+        );
+    }
+
+    public List<Scrip> downloadAndFilterScrips(String categoryKey, Account activeAccount, java.util.function.Predicate<Scrip> filterPredicate) {
+        String catKeyLower = categoryKey.toLowerCase();
+        List<String> candidateUrls = new ArrayList<>();
+
+        if (activeAccount != null) {
+            try {
+                Object masterPayload = kotakApiClient.getScripMaster(activeAccount);
+                List<String> extracted = extractUrls(masterPayload);
+                for (String u : extracted) {
+                    if (u.toLowerCase().contains(catKeyLower)) {
+                        candidateUrls.add(u);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[ScripMaster] Failed to fetch scrip master from broker for {}: {}", categoryKey, e.getMessage());
+            }
+        }
+
+        if (FALLBACK_SCRIP_URLS.containsKey(catKeyLower)) {
+            for (String fallbackUrl : FALLBACK_SCRIP_URLS.get(catKeyLower)) {
+                if (!candidateUrls.contains(fallbackUrl)) {
+                    candidateUrls.add(fallbackUrl);
+                }
+            }
+        }
+
+        for (String targetUrl : candidateUrls) {
+            try {
+                HttpRequest request = HttpRequest.newBuilder().uri(URI.create(targetUrl)).GET().build();
+                HttpResponse<java.io.InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+
+                if (response.statusCode() != 200) continue;
+
+                List<Scrip> filtered = new ArrayList<>();
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body()))) {
+                    String headerLine = reader.readLine();
+                    if (headerLine != null) {
+                        String[] headers = headerLine.replace("\ufeff", "").split(",");
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            String[] parts = line.split(",");
+                            Map<String, String> row = new HashMap<>();
+                            for (int i = 0; i < Math.min(headers.length, parts.length); i++) {
+                                row.put(headers[i].trim(), parts[i].trim());
+                            }
+                            Scrip scrip = ScripParser.parseRow(row);
+                            if (scrip != null && filterPredicate.test(scrip)) {
+                                filtered.add(scrip);
+                            }
+                        }
+                    }
+                }
+                return filtered;
+            } catch (Exception e) {
+                log.warn("[ScripMaster] Error downloading/parsing {}: {}", targetUrl, e.getMessage());
+            }
+        }
+        return Collections.emptyList();
+    }
+
     public Map<String, Object> loadScripCategory(String categoryKey, Account activeAccount) {
         String catKeyLower = categoryKey != null ? categoryKey.toLowerCase() : "";
         List<String> candidateUrls = new ArrayList<>();
@@ -264,7 +376,6 @@ public class ScripService {
             }
         }
 
-        // Fallback to static Kotak scrip master URLs if broker payload didn't contain the URL
         if (FALLBACK_SCRIP_URLS.containsKey(catKeyLower)) {
             for (String fallbackUrl : FALLBACK_SCRIP_URLS.get(catKeyLower)) {
                 if (!candidateUrls.contains(fallbackUrl)) {

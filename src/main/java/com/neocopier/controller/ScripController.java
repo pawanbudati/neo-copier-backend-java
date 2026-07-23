@@ -2,6 +2,7 @@ package com.neocopier.controller;
 
 import com.neocopier.client.KotakFeedWebSocketClient;
 import com.neocopier.model.Account;
+import com.neocopier.scheduler.ScripScheduler;
 import com.neocopier.service.AccountService;
 import com.neocopier.service.ScripService;
 import org.springframework.http.ResponseEntity;
@@ -16,11 +17,16 @@ public class ScripController {
     private final ScripService scripService;
     private final AccountService accountService;
     private final KotakFeedWebSocketClient webSocketClient;
+    private final ScripScheduler scripScheduler;
 
-    public ScripController(ScripService scripService, AccountService accountService, KotakFeedWebSocketClient webSocketClient) {
+    public ScripController(ScripService scripService,
+                           AccountService accountService,
+                           KotakFeedWebSocketClient webSocketClient,
+                           ScripScheduler scripScheduler) {
         this.scripService = scripService;
         this.accountService = accountService;
         this.webSocketClient = webSocketClient;
+        this.scripScheduler = scripScheduler;
     }
 
     @GetMapping("/api/search")
@@ -38,6 +44,22 @@ public class ScripController {
     @GetMapping("/api/scrips/status")
     public Map<String, Object> getScripStatus() {
         return scripService.getScripStatus();
+    }
+
+    @PostMapping("/api/scrips/load-daily-options")
+    public ResponseEntity<Map<String, Object>> loadDailyOptions() {
+        Map<String, Object> res = scripScheduler.executeSync();
+        if (!Boolean.TRUE.equals(res.get("success"))) {
+            return ResponseEntity.status(500).body(Map.of("error", res.getOrDefault("error", "Failed to load daily index options")));
+        }
+        return ResponseEntity.ok(res);
+    }
+
+    @GetMapping("/api/scrips/daily-sync-status")
+    public Map<String, Object> getDailySyncStatus() {
+        return Map.of(
+                "todaySyncSuccessful", scripScheduler.isTodaySyncSuccessful()
+        );
     }
 
     @PostMapping("/api/scrips/load")
