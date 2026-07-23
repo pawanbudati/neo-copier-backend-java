@@ -21,10 +21,10 @@ public class Account {
     private String ucc;
     private String mpin;
 
-    @Column(name = "consumerkey")
+    @Column(name = "consumerkey", length = 4096, columnDefinition = "TEXT")
     private String consumerKey;
 
-    @Column(name = "totpsecret")
+    @Column(name = "totpsecret", length = 4096, columnDefinition = "TEXT")
     private String totpSecret;
 
     private Double multiplier = 1.0;
@@ -33,16 +33,16 @@ public class Account {
     @Column(name = "lastlogin")
     private String lastLogin;
 
-    @Column(name = "accesstoken", columnDefinition = "TEXT")
+    @Column(name = "accesstoken", length = 4096, columnDefinition = "TEXT")
     private String accessToken;
 
-    @Column(columnDefinition = "TEXT")
+    @Column(length = 4096, columnDefinition = "TEXT")
     private String sid;
 
-    @Column(name = "neotoken", columnDefinition = "TEXT")
+    @Column(name = "neotoken", length = 4096, columnDefinition = "TEXT")
     private String neoToken;
 
-    @Column(columnDefinition = "TEXT")
+    @Column(length = 4096, columnDefinition = "TEXT")
     private String rid;
 
     @Column(name = "hsserverid")
@@ -51,10 +51,10 @@ public class Account {
     @Column(name = "datacenter")
     private String dataCenter;
 
-    @Column(name = "baseurl")
+    @Column(name = "baseurl", length = 4096, columnDefinition = "TEXT")
     private String baseUrl;
 
-    @Column(name = "errormessage", columnDefinition = "TEXT")
+    @Column(name = "errormessage", length = 4096, columnDefinition = "TEXT")
     private String errorMessage;
 
     @Column(name = "createdat")

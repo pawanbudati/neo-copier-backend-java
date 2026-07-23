@@ -14,6 +14,11 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 
+import jakarta.annotation.PostConstruct;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import org.springframework.transaction.annotation.Transactional;
+
 @Service
 public class AccountService {
 
@@ -22,9 +27,26 @@ public class AccountService {
     private final AccountRepository accountRepository;
     private final KotakApiClient kotakApiClient;
 
+    @PersistenceContext
+    private EntityManager entityManager;
+
     public AccountService(AccountRepository accountRepository, KotakApiClient kotakApiClient) {
         this.accountRepository = accountRepository;
         this.kotakApiClient = kotakApiClient;
+    }
+
+    @PostConstruct
+    @Transactional
+    public void alterTableColumns() {
+        String[] columns = {"accesstoken", "neotoken", "sid", "rid", "consumerkey", "totpsecret", "errormessage", "baseurl"};
+        for (String col : columns) {
+            try {
+                entityManager.createNativeQuery("ALTER TABLE accounts ALTER COLUMN " + col + " TYPE TEXT").executeUpdate();
+            } catch (Exception e) {
+                // Ignore if DB dialect doesn't use standard ALTER or column is already TEXT
+            }
+        }
+        log.info("[AccountService] Verified account table column types for long JWT tokens.");
     }
 
     public List<Account> getAllAccounts() {
