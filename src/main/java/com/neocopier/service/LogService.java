@@ -63,9 +63,13 @@ public class LogService {
     public void clearLogFile() {
         File file = new File(LOG_FILE_PATH);
         if (file.exists()) {
-            try {
-                Files.write(Path.of(LOG_FILE_PATH), new byte[0]);
-            } catch (IOException ignored) {}
+            try (RandomAccessFile raf = new RandomAccessFile(file, "rw")) {
+                raf.setLength(0);
+            } catch (IOException e) {
+                try {
+                    Files.write(Path.of(LOG_FILE_PATH), new byte[0]);
+                } catch (IOException ignored) {}
+            }
         }
     }
 }
