@@ -1,10 +1,7 @@
 package com.neocopier.client;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neocopier.model.Account;
-import com.neocopier.util.TotpUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,103 +27,91 @@ public class KotakApiClient {
 
     public KotakApiClient() {
         this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
+                .connectTimeout(Duration.ofSeconds(15))
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
-        this.objectMapper = new ObjectMapper()
-                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-    }
-
-    public static String normalizeMobileNumber(String mobile) {
-        if (mobile == null) return "";
-        String trimmed = mobile.trim();
-        if (trimmed.startsWith("+")) return trimmed;
-        String digits = trimmed.replaceAll("\\D+", "");
-        if (digits.length() == 10) return "+91" + digits;
-        if (digits.length() == 12 && digits.startsWith("91")) return "+" + digits;
-        return trimmed;
+        this.objectMapper = new ObjectMapper();
     }
 
     public Map<String, Object> authenticate(Account account, String manualOtp) {
-        String totpCode;
-        if (TotpUtils.hasAutoTotpSecret(account.getTotpSecret())) {
-            totpCode = TotpUtils.generateTotp(account.getTotpSecret());
-        } else if (manualOtp != null && !manualOtp.trim().isEmpty()) {
+        String baseUrl = getBaseUrl(account);
+        String totpSecret = account.getTotpSecret();
+        String mpin = account.getMpin();
+
+        if (totpSecret == null || totpSecret.trim().isEmpty()) {
+            throw new RuntimeException("TOTP secret is required for account authentication.");
+        }
+
+        String totpCode = com.neocopier.util.TotpUtils.generateTotp(totpSecret);
+        if (manualOtp != null && !manualOtp.trim().isEmpty()) {
             totpCode = manualOtp.trim();
-        } else {
-            throw new RuntimeException("Enter the current 6-digit TOTP from your authenticator app.");
         }
 
-        if (account.getConsumerKey() == null || account.getConsumerKey().trim().isEmpty()) {
-            throw new RuntimeException("Consumer Key is required.");
-        }
-        if (account.getUcc() == null || account.getUcc().trim().isEmpty()) {
-            throw new RuntimeException("UCC (Unique Client Code) is required.");
-        }
-        if (account.getMpin() == null || account.getMpin().trim().isEmpty()) {
-            throw new RuntimeException("MPIN is required for login.");
-        }
-
-        String baseUrl = account.getBaseUrl() != null && !account.getBaseUrl().isEmpty() ? account.getBaseUrl() : defaultBaseUrl;
-
-        // Step 1: TOTP Login
-        log.info("[Auth] Step 1: TOTP Login for {} via Kotak API...", account.getNickname());
-        Map<String, Object> loginBody = Map.of(
-                "mobilenumber", normalizeMobileNumber(account.getMobileNumber()),
-                "ucc", account.getUcc(),
+        Map<String, Object> payload1 = Map.of(
+                "mobileNumber", account.getMobileNumber() != null ? account.getMobileNumber() : "",
+                "ucc", account.getUcc() != null ? account.getUcc() : "",
                 "totp", totpCode
         );
 
-        Map<String, Object> loginRes = postRequest(baseUrl + "/login/v2/totp/login", loginBody, account.getConsumerKey(), null, null);
-        String sid = extractString(loginRes, List.of("sid", "Sid", "session_id"));
-        String neoToken = extractString(loginRes, List.of("neoToken", "neo_token", "token", "Auth"));
+        Map<String, Object> step1Res = postRequest(baseUrl + "/oauth2/token", payload1, account.getConsumerKey(), null, null);
+        String token = (String) step1Res.get("token");
+        String sid = (String) step1Res.get("sid");
 
-        // Step 2: MPIN Validate
-        log.info("[Auth] Step 2: MPIN Validate for {} via Kotak API...", account.getNickname());
-        Map<String, Object> validateBody = Map.of("mpin", account.getMpin(), "OTP", account.getMpin());
-        Map<String, Object> validateRes = postRequest(baseUrl + "/login/v2/totp/validate", validateBody, account.getConsumerKey(), sid, neoToken);
-
-        if (sid == null || sid.isEmpty()) {
-            sid = extractString(validateRes, List.of("sid", "Sid", "session_id"));
-        }
-        if (neoToken == null || neoToken.isEmpty()) {
-            neoToken = extractString(validateRes, List.of("neoToken", "neo_token", "token", "Auth"));
+        if (token == null || sid == null) {
+            String err = (String) step1Res.getOrDefault("message", step1Res.getOrDefault("error", "TOTP authentication failed"));
+            throw new RuntimeException(err);
         }
 
-        Map<String, Object> result = new HashMap<>();
-        result.put("success", true);
-        result.put("accessToken", account.getConsumerKey());
-        result.put("sid", sid);
-        result.put("neoToken", neoToken);
-        result.put("rid", extractString(validateRes, List.of("rid")));
-        result.put("hsServerId", extractString(validateRes, List.of("hsServerId", "hs_server_id")));
-        result.put("dataCenter", extractString(validateRes, List.of("dataCenter", "data_center")));
-        result.put("baseUrl", extractString(validateRes, List.of("baseUrl", "base_url")));
-        return result;
-    }
+        Map<String, Object> payload2 = Map.of(
+                "mpin", mpin != null ? mpin : ""
+        );
 
-    public List<Map<String, Object>> getOrderBook(Account account) {
-        String baseUrl = getBaseUrl(account);
-        Map<String, Object> res = getRequest(baseUrl + "/orders/v1/order_report", account);
-        return asList(res);
-    }
+        Map<String, Object> step2Res = postRequest(baseUrl + "/oauth2/token/mpin", payload2, account.getConsumerKey(), sid, token);
+        String neoToken = (String) step2Res.get("token");
+        String hsServerId = (String) step2Res.get("hsServerId");
 
-    public List<Map<String, Object>> getPositions(Account account) {
-        String baseUrl = getBaseUrl(account);
-        Map<String, Object> res = getRequest(baseUrl + "/positions/v1/positions", account);
-        return asList(res);
+        if (neoToken == null) {
+            String err = (String) step2Res.getOrDefault("message", step2Res.getOrDefault("error", "MPIN authentication failed"));
+            throw new RuntimeException(err);
+        }
+
+        Map<String, Object> res = new HashMap<>();
+        res.put("success", true);
+        res.put("accessToken", token);
+        res.put("sid", sid);
+        res.put("neoToken", neoToken);
+        res.put("rid", (String) step2Res.get("rid"));
+        res.put("hsServerId", hsServerId);
+        res.put("dataCenter", (String) step2Res.get("dataCenter"));
+        res.put("baseUrl", baseUrl);
+        return res;
     }
 
     public Map<String, Object> getLimits(Account account) {
         String baseUrl = getBaseUrl(account);
-        Map<String, Object> res = getRequest(baseUrl + "/limits/v1/margin?segment=ALL&exchange=ALL&product=ALL", account);
-        if (res.get("data") instanceof List<?> list && !list.isEmpty()) {
-            return (Map<String, Object>) list.get(0);
+        return getRequest(baseUrl + "/limits/v1/margin?segment=ALL&exchange=ALL&product=ALL", account);
+    }
+
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> getPositions(Account account) {
+        String baseUrl = getBaseUrl(account);
+        Map<String, Object> res = getRequest(baseUrl + "/positions/v1/net", account);
+        Object data = res.get("data");
+        if (data instanceof List<?> list) {
+            return (List<Map<String, Object>>) list;
         }
-        if (res.get("data") instanceof Map<?,?> map) {
-            return (Map<String, Object>) map;
+        return Collections.emptyList();
+    }
+
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> getOrderBook(Account account) {
+        String baseUrl = getBaseUrl(account);
+        Map<String, Object> res = getRequest(baseUrl + "/orders/v1/orderBook", account);
+        Object data = res.get("data");
+        if (data instanceof List<?> list) {
+            return (List<Map<String, Object>>) list;
         }
-        return res;
+        return Collections.emptyList();
     }
 
     public Map<String, Object> placeOrder(Account account, Map<String, Object> payload) {
@@ -158,6 +143,14 @@ public class KotakApiClient {
 
     public Object getScripMaster(Account account) {
         String baseUrl = getBaseUrl(account);
+        try {
+            Map<String, Object> res = getRequest(baseUrl + "/scrip_master/v1/file_paths", account);
+            if (res != null && !res.isEmpty() && !res.containsKey("error")) {
+                return res;
+            }
+        } catch (Exception e) {
+            log.warn("[KotakApiClient] /scrip_master/v1/file_paths endpoint warning: {}", e.getMessage());
+        }
         return getRequest(baseUrl + "/scrip_master/v1/", account);
     }
 
@@ -181,23 +174,19 @@ public class KotakApiClient {
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(url))
-                    .header("Content-Type", "application/json")
-                    .header("ipaddress", "127.0.0.1")
-                    .header("appSource", "custom");
+                    .timeout(Duration.ofSeconds(15));
 
             if (consumerKey != null && !consumerKey.isEmpty()) {
-                builder.header("ConsumerKey", consumerKey);
                 builder.header("Authorization", "Bearer " + consumerKey);
             }
             if (sid != null && !sid.isEmpty()) {
                 builder.header("sid", sid);
-                builder.header("session_id", sid);
             }
             if (neoToken != null && !neoToken.isEmpty()) {
+                builder.header("neo-fin-key", neoToken);
                 builder.header("Auth", neoToken);
-                builder.header("neo_token", neoToken);
-                builder.header("token", neoToken);
             }
+            builder.header("Content-Type", "application/json");
 
             if ("POST".equalsIgnoreCase(method)) {
                 String jsonBody = body != null ? objectMapper.writeValueAsString(body) : "{}";
@@ -209,60 +198,23 @@ public class KotakApiClient {
             HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             String responseBody = response.body();
 
-            if (response.statusCode() == 401 || response.statusCode() == 403) {
-                throw new RuntimeException("Session expired or unauthorized (HTTP " + response.statusCode() + ").");
+            if (responseBody != null && responseBody.trim().startsWith("{")) {
+                return objectMapper.readValue(responseBody, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+            } else if (responseBody != null && responseBody.trim().startsWith("[")) {
+                List<Object> list = objectMapper.readValue(responseBody, new com.fasterxml.jackson.core.type.TypeReference<List<Object>>() {});
+                Map<String, Object> resMap = new HashMap<>();
+                resMap.put("data", list);
+                return resMap;
+            } else {
+                Map<String, Object> resMap = new HashMap<>();
+                resMap.put("raw", responseBody);
+                return resMap;
             }
-
-            if (responseBody == null || responseBody.trim().isEmpty()) {
-                return Collections.emptyMap();
-            }
-
-            if (responseBody.trim().startsWith("[")) {
-                List<Object> list = objectMapper.readValue(responseBody, new TypeReference<>() {});
-                Map<String, Object> res = new HashMap<>();
-                res.put("data", list);
-                return res;
-            }
-
-            return objectMapper.readValue(responseBody, new TypeReference<>() {});
-
         } catch (Exception e) {
             log.error("[KotakApiClient] Request failed: {} {} - {}", method, url, e.getMessage());
-            Map<String, Object> err = new HashMap<>();
-            err.put("error", e.getMessage());
-            err.put("stat", "NotOk");
-            return err;
+            Map<String, Object> errMap = new HashMap<>();
+            errMap.put("error", e.getMessage());
+            return errMap;
         }
-    }
-
-    private String extractString(Map<String, Object> data, List<String> keys) {
-        if (data == null) return null;
-        for (String key : keys) {
-            Object val = data.get(key);
-            if (val != null && !val.toString().isEmpty()) {
-                return val.toString();
-            }
-        }
-        if (data.get("data") instanceof Map<?, ?> nested) {
-            return extractString((Map<String, Object>) nested, keys);
-        }
-        return null;
-    }
-
-    private List<Map<String, Object>> asList(Map<String, Object> data) {
-        if (data == null) return Collections.emptyList();
-        if (data.get("data") instanceof List<?> list) {
-            return (List<Map<String, Object>>) list;
-        }
-        if (data.get("result") instanceof List<?> list) {
-            return (List<Map<String, Object>>) list;
-        }
-        if (data.get("orders") instanceof List<?> list) {
-            return (List<Map<String, Object>>) list;
-        }
-        if (data.get("positions") instanceof List<?> list) {
-            return (List<Map<String, Object>>) list;
-        }
-        return Collections.emptyList();
     }
 }

@@ -31,6 +31,15 @@ public class ScripService {
 
     private static final Logger log = LoggerFactory.getLogger(ScripService.class);
 
+    private static final Map<String, List<String>> FALLBACK_SCRIP_URLS = Map.of(
+            "nse_cm", List.of("https://file.kotaksecurities.com/scrip_master/nse_cm.csv", "https://lapi.kotaksecurities.com/nest_stream/script_master/nse_cm.csv"),
+            "nse_fo", List.of("https://file.kotaksecurities.com/scrip_master/nse_fo.csv", "https://lapi.kotaksecurities.com/nest_stream/script_master/nse_fo.csv"),
+            "bse_fo", List.of("https://file.kotaksecurities.com/scrip_master/bse_fo.csv", "https://lapi.kotaksecurities.com/nest_stream/script_master/bse_fo.csv"),
+            "bse_cm", List.of("https://file.kotaksecurities.com/scrip_master/bse_cm.csv", "https://lapi.kotaksecurities.com/nest_stream/script_master/bse_cm.csv"),
+            "mcx_fo", List.of("https://file.kotaksecurities.com/scrip_master/mcx_fo.csv", "https://lapi.kotaksecurities.com/nest_stream/script_master/mcx_fo.csv"),
+            "cde_fo", List.of("https://file.kotaksecurities.com/scrip_master/cde_fo.csv", "https://lapi.kotaksecurities.com/nest_stream/script_master/cde_fo.csv")
+    );
+
     private final ScripRepository scripRepository;
     private final KotakApiClient kotakApiClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -238,54 +247,80 @@ public class ScripService {
     }
 
     public Map<String, Object> loadScripCategory(String categoryKey, Account activeAccount) {
-        if (activeAccount == null) {
-            return Map.of("success", false, "error", "Login to an active account before downloading scrips.");
-        }
-        try {
-            Object masterPayload = kotakApiClient.getScripMaster(activeAccount);
-            List<String> urls = extractUrls(masterPayload);
-            String targetUrl = urls.stream().filter(u -> u.toLowerCase().contains(categoryKey.toLowerCase())).findFirst().orElse(null);
+        String catKeyLower = categoryKey != null ? categoryKey.toLowerCase() : "";
+        List<String> candidateUrls = new ArrayList<>();
 
-            if (targetUrl == null) {
-                return Map.of("success", false, "error", "Scrip master URL for " + categoryKey + " not found from broker.");
+        if (activeAccount != null) {
+            try {
+                Object masterPayload = kotakApiClient.getScripMaster(activeAccount);
+                List<String> extracted = extractUrls(masterPayload);
+                for (String u : extracted) {
+                    if (u.toLowerCase().contains(catKeyLower)) {
+                        candidateUrls.add(u);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[ScripMaster] Failed to fetch scrip master from broker for {}: {}", categoryKey, e.getMessage());
             }
+        }
 
-            HttpRequest request = HttpRequest.newBuilder().uri(URI.create(targetUrl)).GET().build();
-            HttpResponse<java.io.InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        // Fallback to static Kotak scrip master URLs if broker payload didn't contain the URL
+        if (FALLBACK_SCRIP_URLS.containsKey(catKeyLower)) {
+            for (String fallbackUrl : FALLBACK_SCRIP_URLS.get(catKeyLower)) {
+                if (!candidateUrls.contains(fallbackUrl)) {
+                    candidateUrls.add(fallbackUrl);
+                }
+            }
+        }
 
-            List<Scrip> parsedScrips = new ArrayList<>();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body()))) {
-                String headerLine = reader.readLine();
-                if (headerLine != null) {
-                    String[] headers = headerLine.replace("\ufeff", "").split(",");
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        String[] parts = line.split(",");
-                        Map<String, String> row = new HashMap<>();
-                        for (int i = 0; i < Math.min(headers.length, parts.length); i++) {
-                            row.put(headers[i].trim(), parts[i].trim());
-                        }
-                        Scrip scrip = ScripParser.parseRow(row);
-                        if (scrip != null) {
-                            parsedScrips.add(scrip);
+        if (candidateUrls.isEmpty()) {
+            return Map.of("success", false, "error", "Scrip master URL for " + categoryKey + " not found from broker.");
+        }
+
+        for (String targetUrl : candidateUrls) {
+            try {
+                log.info("[ScripMaster] Downloading {} scrip master from {}", categoryKey, targetUrl);
+                HttpRequest request = HttpRequest.newBuilder().uri(URI.create(targetUrl)).GET().build();
+                HttpResponse<java.io.InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+
+                if (response.statusCode() != 200) {
+                    continue;
+                }
+
+                List<Scrip> parsedScrips = new ArrayList<>();
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body()))) {
+                    String headerLine = reader.readLine();
+                    if (headerLine != null) {
+                        String[] headers = headerLine.replace("\ufeff", "").split(",");
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            String[] parts = line.split(",");
+                            Map<String, String> row = new HashMap<>();
+                            for (int i = 0; i < Math.min(headers.length, parts.length); i++) {
+                                row.put(headers[i].trim(), parts[i].trim());
+                            }
+                            Scrip scrip = ScripParser.parseRow(row);
+                            if (scrip != null) {
+                                parsedScrips.add(scrip);
+                            }
                         }
                     }
                 }
+
+                if (!parsedScrips.isEmpty()) {
+                    String exchange = parsedScrips.get(0).getExchange();
+                    scripRepository.deleteByExchange(exchange);
+                    scripRepository.saveAll(parsedScrips);
+                    populateMemoryCache();
+                    log.info("[ScripMaster] Successfully saved {} scrips for category {}", parsedScrips.size(), categoryKey);
+                    return Map.of("success", true, "category", categoryKey, "count", parsedScrips.size(), "totalCount", scripRepository.count());
+                }
+            } catch (Exception e) {
+                log.warn("[ScripMaster] Failed attempt downloading {} from {}: {}", categoryKey, targetUrl, e.getMessage());
             }
-
-            if (!parsedScrips.isEmpty()) {
-                String exchange = parsedScrips.get(0).getExchange();
-                scripRepository.deleteByExchange(exchange);
-                scripRepository.saveAll(parsedScrips);
-                populateMemoryCache();
-            }
-
-            return Map.of("success", true, "category", categoryKey, "count", parsedScrips.size(), "totalCount", scripRepository.count());
-
-        } catch (Exception e) {
-            log.error("[ScripMaster] Failed to load scrip category {}: {}", categoryKey, e.getMessage());
-            return Map.of("success", false, "error", e.getMessage());
         }
+
+        return Map.of("success", false, "error", "Failed to download scrip master for " + categoryKey + " from all available URLs.");
     }
 
     public Map<String, Object> clearScripCategory(String categoryKey) {
