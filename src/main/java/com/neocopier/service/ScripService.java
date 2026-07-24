@@ -39,6 +39,9 @@ public class ScripService {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient;
 
+    @jakarta.persistence.PersistenceContext
+    private jakarta.persistence.EntityManager entityManager;
+
     private final List<Scrip> inMemoryScripCache = new CopyOnWriteArrayList<>();
     private boolean isCacheLoaded = false;
 
@@ -330,44 +333,21 @@ public class ScripService {
             }
             try {
                 log.info("[ScripMaster] Downloading {} scrip master from {}", categoryKey, targetUrl);
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(targetUrl))
-                        .timeout(Duration.ofSeconds(30))
-                        .header("User-Agent", "Mozilla/5.0")
-                        .GET()
-                        .build();
-
-                HttpResponse<java.io.InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-
-                if (response.statusCode() != 200) {
-                    log.warn("[ScripMaster] Non-200 HTTP status {} from {}", response.statusCode(), targetUrl);
-                    continue;
-                }
+                byte[] csvBytes = downloadBytes(targetUrl);
 
                 List<Scrip> filtered = new ArrayList<>();
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body(), java.nio.charset.StandardCharsets.UTF_8))) {
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(new java.io.ByteArrayInputStream(csvBytes), java.nio.charset.StandardCharsets.UTF_8))) {
                     String headerLine = reader.readLine();
                     if (headerLine != null) {
                         String[] headers = headerLine.replace("\ufeff", "").split(",");
+                        ScripParser.HeaderIndexMap indices = ScripParser.HeaderIndexMap.from(headers);
                         String line;
                         while ((line = reader.readLine()) != null) {
-                            if (line.trim().isEmpty()) continue;
+                            if (line.isEmpty()) continue;
                             String[] parts = line.split(",", -1);
-                            Map<String, String> row = new HashMap<>();
-                            for (int i = 0; i < Math.min(headers.length, parts.length); i++) {
-                                String hKey = headers[i] != null ? headers[i].trim() : "";
-                                String pVal = parts[i] != null ? parts[i].trim() : "";
-                                if (!hKey.isEmpty()) {
-                                    row.put(hKey, pVal);
-                                }
-                            }
-                            try {
-                                Scrip scrip = ScripParser.parseRow(row);
-                                if (scrip != null && filterPredicate.test(scrip)) {
-                                    filtered.add(scrip);
-                                }
-                            } catch (Exception parseEx) {
-                                // Ignore single bad row
+                            Scrip scrip = ScripParser.parseRowFast(parts, indices);
+                            if (scrip != null && filterPredicate.test(scrip)) {
+                                filtered.add(scrip);
                             }
                         }
                     }
@@ -381,6 +361,45 @@ public class ScripService {
             }
         }
         return Collections.emptyList();
+    }
+
+    private byte[] downloadBytes(String targetUrl) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(targetUrl))
+                .timeout(Duration.ofSeconds(60))
+                .header("User-Agent", "Mozilla/5.0")
+                .header("Accept-Encoding", "gzip, deflate")
+                .GET()
+                .build();
+
+        HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+        if (response.statusCode() != 200) {
+            throw new java.io.IOException("HTTP status " + response.statusCode() + " from " + targetUrl);
+        }
+
+        byte[] rawBytes = response.body();
+        if (rawBytes == null || rawBytes.length == 0) {
+            throw new java.io.IOException("Empty response body from " + targetUrl);
+        }
+
+        // Handle ZIP compressed files (magic header PK 0x50 0x4B 0x03 0x04)
+        if (rawBytes.length > 4 && rawBytes[0] == 0x50 && rawBytes[1] == 0x4B) {
+            try (java.util.zip.ZipInputStream zis = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(rawBytes))) {
+                java.util.zip.ZipEntry entry = zis.getNextEntry();
+                if (entry != null) {
+                    return zis.readAllBytes();
+                }
+            }
+        }
+
+        // Handle GZIP compressed files (magic header 0x1F 0x8B)
+        if (rawBytes.length > 2 && (rawBytes[0] & 0xFF) == 0x1F && (rawBytes[1] & 0xFF) == 0x8B) {
+            try (java.util.zip.GZIPInputStream gzis = new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(rawBytes))) {
+                return gzis.readAllBytes();
+            }
+        }
+
+        return rawBytes;
     }
 
     @Transactional
@@ -415,43 +434,22 @@ public class ScripService {
         for (String targetUrl : candidateUrls) {
             try {
                 log.info("[ScripMaster] Downloading {} scrip master from {}", categoryKey, targetUrl);
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(targetUrl))
-                        .timeout(Duration.ofSeconds(30))
-                        .header("User-Agent", "Mozilla/5.0")
-                        .GET()
-                        .build();
-
-                HttpResponse<java.io.InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-
-                if (response.statusCode() != 200) {
-                    log.warn("[ScripMaster] Non-200 HTTP status {} from {}", response.statusCode(), targetUrl);
-                    continue;
-                }
+                byte[] csvBytes = downloadBytes(targetUrl);
 
                 List<Scrip> parsedScrips = new ArrayList<>();
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body(), java.nio.charset.StandardCharsets.UTF_8))) {
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(new java.io.ByteArrayInputStream(csvBytes), java.nio.charset.StandardCharsets.UTF_8))) {
                     String headerLine = reader.readLine();
                     if (headerLine != null) {
                         String[] headers = headerLine.replace("\ufeff", "").split(",");
+                        ScripParser.HeaderIndexMap indices = ScripParser.HeaderIndexMap.from(headers);
                         String line;
                         while ((line = reader.readLine()) != null) {
-                            if (line.trim().isEmpty()) continue;
+                            if (line.isEmpty()) continue;
                             String[] parts = line.split(",", -1);
-                            Map<String, String> row = new HashMap<>();
-                            for (int i = 0; i < Math.min(headers.length, parts.length); i++) {
-                                String hKey = headers[i] != null ? headers[i].trim() : "";
-                                String pVal = parts[i] != null ? parts[i].trim() : "";
-                                if (!hKey.isEmpty()) {
-                                    row.put(hKey, pVal);
-                                }
+                            Scrip scrip = ScripParser.parseRowFast(parts, indices);
+                            if (scrip != null) {
+                                parsedScrips.add(scrip);
                             }
-                            try {
-                                Scrip scrip = ScripParser.parseRow(row);
-                                if (scrip != null) {
-                                    parsedScrips.add(scrip);
-                                }
-                            } catch (Exception ignored) {}
                         }
                     }
                 }
@@ -475,11 +473,14 @@ public class ScripService {
     @Transactional
     public void saveScripsInBatches(List<Scrip> scrips) {
         if (scrips == null || scrips.isEmpty()) return;
-        int batchSize = 1000;
+        int batchSize = 2500;
         for (int i = 0; i < scrips.size(); i += batchSize) {
             int end = Math.min(i + batchSize, scrips.size());
             scripRepository.saveAll(scrips.subList(i, end));
             scripRepository.flush();
+            if (entityManager != null) {
+                entityManager.clear();
+            }
         }
     }
 
