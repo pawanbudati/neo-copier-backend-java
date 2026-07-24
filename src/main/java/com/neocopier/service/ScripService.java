@@ -31,14 +31,7 @@ public class ScripService {
 
     private static final Logger log = LoggerFactory.getLogger(ScripService.class);
 
-    private static final Map<String, List<String>> FALLBACK_SCRIP_URLS = Map.of(
-            "nse_cm", List.of("https://csec-master.kotaksecurities.com/scrip_master/nse_cm.csv", "https://content.kotaksecurities.com/scrip_master/nse_cm.csv", "https://file.kotaksecurities.com/scrip_master/nse_cm.csv", "https://lapi.kotaksecurities.com/scrip_master/nse_cm.csv"),
-            "nse_fo", List.of("https://csec-master.kotaksecurities.com/scrip_master/nse_fo.csv", "https://content.kotaksecurities.com/scrip_master/nse_fo.csv", "https://file.kotaksecurities.com/scrip_master/nse_fo.csv", "https://lapi.kotaksecurities.com/scrip_master/nse_fo.csv"),
-            "bse_fo", List.of("https://csec-master.kotaksecurities.com/scrip_master/bse_fo.csv", "https://content.kotaksecurities.com/scrip_master/bse_fo.csv", "https://file.kotaksecurities.com/scrip_master/bse_fo.csv", "https://lapi.kotaksecurities.com/scrip_master/bse_fo.csv"),
-            "bse_cm", List.of("https://csec-master.kotaksecurities.com/scrip_master/bse_cm.csv", "https://content.kotaksecurities.com/scrip_master/bse_cm.csv", "https://file.kotaksecurities.com/scrip_master/bse_cm.csv", "https://lapi.kotaksecurities.com/scrip_master/bse_cm.csv"),
-            "mcx_fo", List.of("https://csec-master.kotaksecurities.com/scrip_master/mcx_fo.csv", "https://content.kotaksecurities.com/scrip_master/mcx_fo.csv", "https://file.kotaksecurities.com/scrip_master/mcx_fo.csv", "https://lapi.kotaksecurities.com/scrip_master/mcx_fo.csv"),
-            "cde_fo", List.of("https://csec-master.kotaksecurities.com/scrip_master/cde_fo.csv", "https://content.kotaksecurities.com/scrip_master/cde_fo.csv", "https://file.kotaksecurities.com/scrip_master/cde_fo.csv", "https://lapi.kotaksecurities.com/scrip_master/cde_fo.csv")
-    );
+
 
     private final ScripRepository scripRepository;
     private final KotakApiClient kotakApiClient;
@@ -323,11 +316,9 @@ public class ScripService {
             }
         }
 
-        if (FALLBACK_SCRIP_URLS.containsKey(catKeyLower)) {
-            for (String fallbackUrl : FALLBACK_SCRIP_URLS.get(catKeyLower)) {
-                if (!candidateUrls.contains(fallbackUrl)) {
-                    candidateUrls.add(fallbackUrl);
-                }
+        for (String fallbackUrl : getFallbackUrls(catKeyLower)) {
+            if (!candidateUrls.contains(fallbackUrl)) {
+                candidateUrls.add(fallbackUrl);
             }
         }
 
@@ -408,11 +399,9 @@ public class ScripService {
             }
         }
 
-        if (FALLBACK_SCRIP_URLS.containsKey(catKeyLower)) {
-            for (String fallbackUrl : FALLBACK_SCRIP_URLS.get(catKeyLower)) {
-                if (!candidateUrls.contains(fallbackUrl)) {
-                    candidateUrls.add(fallbackUrl);
-                }
+        for (String fallbackUrl : getFallbackUrls(catKeyLower)) {
+            if (!candidateUrls.contains(fallbackUrl)) {
+                candidateUrls.add(fallbackUrl);
             }
         }
 
@@ -423,29 +412,43 @@ public class ScripService {
         for (String targetUrl : candidateUrls) {
             try {
                 log.info("[ScripMaster] Downloading {} scrip master from {}", categoryKey, targetUrl);
-                HttpRequest request = HttpRequest.newBuilder().uri(URI.create(targetUrl)).GET().build();
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(targetUrl))
+                        .timeout(Duration.ofSeconds(30))
+                        .header("User-Agent", "Mozilla/5.0")
+                        .GET()
+                        .build();
+
                 HttpResponse<java.io.InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
 
                 if (response.statusCode() != 200) {
+                    log.warn("[ScripMaster] Non-200 HTTP status {} from {}", response.statusCode(), targetUrl);
                     continue;
                 }
 
                 List<Scrip> parsedScrips = new ArrayList<>();
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body()))) {
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body(), java.nio.charset.StandardCharsets.UTF_8))) {
                     String headerLine = reader.readLine();
                     if (headerLine != null) {
                         String[] headers = headerLine.replace("\ufeff", "").split(",");
                         String line;
                         while ((line = reader.readLine()) != null) {
-                            String[] parts = line.split(",");
+                            if (line.trim().isEmpty()) continue;
+                            String[] parts = line.split(",", -1);
                             Map<String, String> row = new HashMap<>();
                             for (int i = 0; i < Math.min(headers.length, parts.length); i++) {
-                                row.put(headers[i].trim(), parts[i].trim());
+                                String hKey = headers[i] != null ? headers[i].trim() : "";
+                                String pVal = parts[i] != null ? parts[i].trim() : "";
+                                if (!hKey.isEmpty()) {
+                                    row.put(hKey, pVal);
+                                }
                             }
-                            Scrip scrip = ScripParser.parseRow(row);
-                            if (scrip != null) {
-                                parsedScrips.add(scrip);
-                            }
+                            try {
+                                Scrip scrip = ScripParser.parseRow(row);
+                                if (scrip != null) {
+                                    parsedScrips.add(scrip);
+                                }
+                            } catch (Exception ignored) {}
                         }
                     }
                 }
@@ -459,11 +462,34 @@ public class ScripService {
                     return Map.of("success", true, "category", categoryKey, "count", parsedScrips.size(), "totalCount", scripRepository.count());
                 }
             } catch (Exception e) {
-                log.warn("[ScripMaster] Failed attempt downloading {} from {}: {}", categoryKey, targetUrl, e.getMessage());
+                log.warn("[ScripMaster] Failed attempt downloading {} from {}: {}", categoryKey, targetUrl, e != null ? e.toString() : "Unknown error");
             }
         }
 
         return Map.of("success", false, "error", "Failed to download scrip master for " + categoryKey + " from all available URLs.");
+    }
+
+    private List<String> getFallbackUrls(String categoryKey) {
+        String catKeyLower = categoryKey != null ? categoryKey.toLowerCase() : "";
+        List<String> dates = List.of(
+                LocalDate.now().toString(),
+                LocalDate.now().minusDays(1).toString(),
+                LocalDate.now().minusDays(2).toString()
+        );
+
+        List<String> urls = new ArrayList<>();
+        for (String dateStr : dates) {
+            if ("nse_cm".equals(catKeyLower)) {
+                urls.add("https://lapi.kotaksecurities.com/wso2-scripmaster/v1/prod/" + dateStr + "/transformed-v1/nse_cm-v1.csv");
+                urls.add("https://lapi.kotaksecurities.com/wso2-scripmaster/v1/prod/" + dateStr + "/transformed/nse_cm.csv");
+            } else if ("bse_cm".equals(catKeyLower)) {
+                urls.add("https://lapi.kotaksecurities.com/wso2-scripmaster/v1/prod/" + dateStr + "/transformed-v1/bse_cm-v1.csv");
+                urls.add("https://lapi.kotaksecurities.com/wso2-scripmaster/v1/prod/" + dateStr + "/transformed/bse_cm.csv");
+            } else {
+                urls.add("https://lapi.kotaksecurities.com/wso2-scripmaster/v1/prod/" + dateStr + "/transformed/" + catKeyLower + ".csv");
+            }
+        }
+        return urls;
     }
 
     public Map<String, Object> clearScripCategory(String categoryKey) {

@@ -214,12 +214,19 @@ public class KotakApiClient {
     }
 
     public Object getScripMaster(Account account) {
-        // Python SDK: client.scrip_master() -> scrip_master_file_paths
+        // Kotak Neo API endpoints for scrip master file paths:
+        List<String> paths = List.of(
+                "/script-details/1.0/masterscrip/file-paths",
+                "/Files/1.0/masterscrip/v2/file-paths",
+                "/scrip_master/v1/file_paths"
+        );
         for (String base : getCandidateBaseUrls(account)) {
-            try {
-                Map<String, Object> res = getRequest(base + "/scrip_master/v1/file_paths", account);
-                if (isValidResponse(res)) return res;
-            } catch (Exception ignored) {}
+            for (String path : paths) {
+                try {
+                    Map<String, Object> res = getRequest(base + path, account);
+                    if (isValidResponse(res)) return res;
+                } catch (Exception ignored) {}
+            }
         }
         return Collections.emptyMap();
     }
