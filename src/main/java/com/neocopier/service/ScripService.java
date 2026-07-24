@@ -360,16 +360,69 @@ public class ScripService {
         return Map.of("loaded", totalCount > 0, "totalCount", totalCount, "categories", categories);
     }
 
+    @org.springframework.beans.factory.annotation.Value("${python.command:}")
+    private String configuredPythonCmd;
+
+    private String resolvePythonExecutable() {
+        if (configuredPythonCmd != null && !configuredPythonCmd.trim().isEmpty()) {
+            return configuredPythonCmd.trim();
+        }
+        String envCmd = System.getenv("PYTHON_CMD");
+        if (envCmd != null && !envCmd.trim().isEmpty()) {
+            return envCmd.trim();
+        }
+
+        String os = System.getProperty("os.name", "").toLowerCase();
+        if (!os.contains("win")) {
+            if (canRunCommand("python3")) return "python3";
+            if (canRunCommand("python")) return "python";
+        } else {
+            if (canRunCommand("python")) return "python";
+            if (canRunCommand("python3")) return "python3";
+            if (canRunCommand("py")) return "py";
+        }
+        return "python3";
+    }
+
+    private boolean canRunCommand(String cmd) {
+        try {
+            Process p = new ProcessBuilder(cmd, "--version").start();
+            return p.waitFor() == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     @Transactional
     private Map<String, Object> executePythonScripLoader(List<String> commandArgs) {
         try {
+            String pythonExec = resolvePythonExecutable();
+
+            java.io.File scriptFile = new java.io.File("scripts/scrip_loader.py");
+            if (!scriptFile.exists()) {
+                java.io.File altFile = new java.io.File(System.getProperty("user.dir"), "scripts/scrip_loader.py");
+                if (altFile.exists()) {
+                    scriptFile = altFile;
+                }
+            }
+
+            if (!scriptFile.exists()) {
+                log.error("[PythonScripLoader] Script not found at {}", scriptFile.getAbsolutePath());
+                return Map.of("success", false, "error", "Script scrip_loader.py not found at " + scriptFile.getAbsolutePath());
+            }
+
             List<String> fullCmd = new ArrayList<>();
-            fullCmd.add("python");
-            fullCmd.add("scripts/scrip_loader.py");
+            fullCmd.add(pythonExec);
+            fullCmd.add(scriptFile.getAbsolutePath());
             fullCmd.addAll(commandArgs);
 
+            log.info("[PythonScripLoader] Executing command: {}", fullCmd);
+
             ProcessBuilder pb = new ProcessBuilder(fullCmd);
-            pb.directory(new java.io.File("."));
+            java.io.File workDir = scriptFile.getParentFile() != null && scriptFile.getParentFile().getParentFile() != null
+                    ? scriptFile.getParentFile().getParentFile()
+                    : new java.io.File(".");
+            pb.directory(workDir);
 
             Process proc = pb.start();
             String stdout = new String(proc.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
@@ -382,7 +435,7 @@ public class ScripService {
 
             if (exitCode != 0) {
                 log.error("[PythonScripLoader] Script failed with exit code {}", exitCode);
-                return Map.of("success", false, "error", "Python loader failed with code " + exitCode);
+                return Map.of("success", false, "error", "Python loader failed with code " + exitCode + ". Log: " + stderr.trim());
             }
 
             if (stdout != null && !stdout.trim().isEmpty()) {
