@@ -282,14 +282,19 @@ def load_category(cat_key: str, active_account: dict = None):
     return {"success": False, "error": f"Failed to download scrip master for {cat_key}"}
 
 def load_daily_options(active_account: dict = None):
-    # Load NIFTY and SENSEX options across NSE_FO and BSE_FO
+    # Load NIFTY and SENSEX options across NSE_FO and BSE_FO (Starting with NIFTY or SENSEX only)
     def option_filter(symbol, inst_name, segment, expiry_str):
         if segment not in ("CE", "PE"):
             return False
-        sym_upper = symbol.upper()
-        inst_upper = inst_name.upper()
-        if "NIFTY" not in sym_upper and "NIFTY" not in inst_upper and "SENSEX" not in sym_upper and "SENSEX" not in inst_upper:
+        sym_upper = (symbol or "").strip().upper()
+        inst_upper = (inst_name or "").strip().upper()
+
+        starts_nifty = sym_upper.startswith("NIFTY") or inst_upper.startswith("NIFTY")
+        starts_sensex = sym_upper.startswith("SENSEX") or inst_upper.startswith("SENSEX") or sym_upper.startswith("BSX") or inst_upper.startswith("BSX")
+
+        if not (starts_nifty or starts_sensex):
             return False
+
         if expiry_str:
             try:
                 exp_d = datetime.fromisoformat(expiry_str).date()
