@@ -11,6 +11,7 @@ import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -242,6 +243,7 @@ public class ScripService {
         return Map.of("loaded", totalCount > 0, "totalCount", totalCount, "categories", categories);
     }
 
+    @Transactional
     public Map<String, Object> loadDailyIndexOptions(Account activeAccount) {
         log.info("[ScripMaster] Loading daily Nifty & Sensex index options (Filtering past expiries)...");
         LocalDate today = LocalDate.now();
@@ -282,7 +284,7 @@ public class ScripService {
         allNewScrips.addAll(sensexOptions);
 
         if (!allNewScrips.isEmpty()) {
-            scripRepository.saveAll(allNewScrips);
+            saveScripsInBatches(allNewScrips);
         }
 
         // Clear RAM cache and reload freshly from DB
@@ -381,6 +383,7 @@ public class ScripService {
         return Collections.emptyList();
     }
 
+    @Transactional
     public Map<String, Object> loadScripCategory(String categoryKey, Account activeAccount) {
         String catKeyLower = categoryKey != null ? categoryKey.toLowerCase() : "";
         List<String> candidateUrls = new ArrayList<>();
@@ -456,7 +459,7 @@ public class ScripService {
                 if (!parsedScrips.isEmpty()) {
                     String exchange = parsedScrips.get(0).getExchange();
                     scripRepository.deleteByExchange(exchange);
-                    scripRepository.saveAll(parsedScrips);
+                    saveScripsInBatches(parsedScrips);
                     populateMemoryCache();
                     log.info("[ScripMaster] Successfully saved {} scrips for category {}", parsedScrips.size(), categoryKey);
                     return Map.of("success", true, "category", categoryKey, "count", parsedScrips.size(), "totalCount", scripRepository.count());
@@ -467,6 +470,17 @@ public class ScripService {
         }
 
         return Map.of("success", false, "error", "Failed to download scrip master for " + categoryKey + " from all available URLs.");
+    }
+
+    @Transactional
+    public void saveScripsInBatches(List<Scrip> scrips) {
+        if (scrips == null || scrips.isEmpty()) return;
+        int batchSize = 1000;
+        for (int i = 0; i < scrips.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, scrips.size());
+            scripRepository.saveAll(scrips.subList(i, end));
+            scripRepository.flush();
+        }
     }
 
     private List<String> getFallbackUrls(String categoryKey) {
@@ -492,6 +506,7 @@ public class ScripService {
         return urls;
     }
 
+    @Transactional
     public Map<String, Object> clearScripCategory(String categoryKey) {
         String exchange = switch (categoryKey.toLowerCase()) {
             case "nse_fo" -> "NFO";
@@ -508,6 +523,7 @@ public class ScripService {
         return Map.of("success", true, "category", categoryKey, "clearedCount", cleared, "totalCount", scripRepository.count());
     }
 
+    @Transactional
     public Map<String, Object> clearAllScrips() {
         scripRepository.deleteAll();
         populateMemoryCache();
