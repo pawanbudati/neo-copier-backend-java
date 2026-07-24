@@ -1,7 +1,8 @@
 @echo off
 setlocal
 
-if "%JAVA_HOME%"=="" set "JAVA_HOME=C:\Program Files\OpenLogic\jdk-21.0.11.10-hotspot"
+if "%JAVA_HOME%"=="" set "JAVA_HOME=C:\Users\budat\.vscode\extensions\redhat.java-1.55.0-win32-x64\jre\21.0.11-win32-x86_64"
+if not exist "%JAVA_HOME%" set "JAVA_HOME=C:\Program Files\OpenLogic\jdk-21.0.11.10-hotspot"
 set "MAVEN_DIR=%~dp0.mvn\apache-maven-3.9.9"
 
 if not exist "%MAVEN_DIR%\bin\mvn.cmd" (
