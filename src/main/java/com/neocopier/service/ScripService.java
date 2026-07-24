@@ -47,9 +47,14 @@ public class ScripService {
 
     private final Map<String, List<Map<String, Object>>> ohlcHistory = new ConcurrentHashMap<>();
 
-    public ScripService(ScripRepository scripRepository, KotakApiClient kotakApiClient) {
+    private final KotakFeedWebSocketClient webSocketClient;
+
+    public ScripService(ScripRepository scripRepository,
+                        KotakApiClient kotakApiClient,
+                        @org.springframework.context.annotation.Lazy KotakFeedWebSocketClient webSocketClient) {
         this.scripRepository = scripRepository;
         this.kotakApiClient = kotakApiClient;
+        this.webSocketClient = webSocketClient;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15))
                 .followRedirects(HttpClient.Redirect.NORMAL)
@@ -245,10 +250,49 @@ public class ScripService {
             return history;
         }
 
-        double basePrice = 100.0;
-        Scrip scrip = scripRepository.findByScriptToken(token).orElse(null);
-        if (scrip != null && scrip.getStrikePrice() != null && scrip.getStrikePrice() > 0) {
-            basePrice = scrip.getStrikePrice();
+        double basePrice = 0.0;
+        double change = 0.0;
+
+        // 1. Check live WebSocket price map first
+        if (webSocketClient != null && webSocketClient.getLastPrices() != null) {
+            Map<String, Object> liveTick = webSocketClient.getLastPrices().get(token);
+            if (liveTick != null) {
+                if (liveTick.get("ltp") instanceof Number num && num.doubleValue() > 0) {
+                    basePrice = num.doubleValue();
+                }
+                if (liveTick.get("change") instanceof Number chg) {
+                    change = chg.doubleValue();
+                }
+            }
+        }
+
+        // 2. Check if transient tick already exists in history
+        if (basePrice <= 0 && !history.isEmpty()) {
+            Map<String, Object> lastBar = history.get(history.size() - 1);
+            if (lastBar.get("close") instanceof Number num && num.doubleValue() > 0) {
+                basePrice = num.doubleValue();
+            }
+        }
+
+        // 3. Fallback to strike price or default
+        if (basePrice <= 0) {
+            Scrip scrip = scripRepository.findByScriptToken(token).orElse(null);
+            if (scrip != null && scrip.getStrikePrice() != null && scrip.getStrikePrice() > 0) {
+                basePrice = scrip.getStrikePrice();
+            } else {
+                basePrice = 100.0;
+            }
+        }
+
+        double startPrice;
+        if (change != 0.0) {
+            startPrice = basePrice - change; // e.g. 225 - (-80) = 305!
+        } else {
+            startPrice = basePrice * 1.04;
+        }
+
+        if (startPrice <= 0) {
+            startPrice = basePrice;
         }
 
         long nowSec = System.currentTimeMillis() / 1000;
@@ -268,7 +312,8 @@ public class ScripService {
         long totalBars = Math.max(60, Math.min(375, (endSec - startSec) / 60));
         startSec = endSec - (totalBars * 60);
 
-        double startPrice = basePrice * 0.985;
+        history.clear(); // Clear transient single bar before populating full history
+
         double step = (basePrice - startPrice) / totalBars;
         double currPrice = startPrice;
 
@@ -279,8 +324,9 @@ public class ScripService {
             double open = currPrice;
             double noise = (rand.nextDouble() - 0.48) * (basePrice * 0.003);
             double close = (i == totalBars - 1) ? basePrice : open + step + noise;
-            double high = Math.max(open, close) + Math.abs(rand.nextDouble() * basePrice * 0.002);
-            double low = Math.min(open, close) - Math.abs(rand.nextDouble() * basePrice * 0.002);
+            if (close <= 0) close = basePrice;
+            double high = Math.max(open, close) + Math.abs(rand.nextDouble() * basePrice * 0.0025);
+            double low = Math.max(0.05, Math.min(open, close) - Math.abs(rand.nextDouble() * basePrice * 0.0025));
 
             open = Math.round(open * 100.0) / 100.0;
             high = Math.round(high * 100.0) / 100.0;
