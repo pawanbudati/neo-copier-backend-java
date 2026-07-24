@@ -113,6 +113,9 @@ public class ScripService {
             }
         } else {
             populateMemoryCache();
+            if (inMemoryScripCache.isEmpty()) {
+                return Map.of("results", Collections.emptyList(), "quotes", Collections.emptyMap());
+            }
             return searchScrips(query, activeAccount, lastPrices);
         }
 
