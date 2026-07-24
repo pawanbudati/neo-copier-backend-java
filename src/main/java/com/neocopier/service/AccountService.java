@@ -298,7 +298,13 @@ public class AccountService {
             for (Account acc : activeAccs) {
                 executor.submit(() -> {
                     try {
-                        kotakApiClient.getLimits(acc);
+                        Map<String, Object> limits = kotakApiClient.getLimits(acc);
+                        if (limits == null || limits.isEmpty() || limits.containsKey("error")) {
+                            log.warn("[Session] Session validation check failed for {}: {}", acc.getNickname(), limits != null ? limits.get("error") : "Session response empty");
+                            acc.setStatus("disconnected");
+                            acc.setErrorMessage("Session expired. Please login again.");
+                            accountRepository.save(acc);
+                        }
                     } catch (Exception e) {
                         log.warn("[Session] Session validation check failed for {}: {}", acc.getNickname(), e.getMessage());
                         acc.setStatus("disconnected");

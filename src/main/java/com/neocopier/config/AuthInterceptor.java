@@ -17,6 +17,10 @@ public class AuthInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        if (authService.isAuthDisabled()) {
+            return true;
+        }
+
         String path = request.getRequestURI();
 
         if ("OPTIONS".equalsIgnoreCase(request.getMethod()) || "/".equals(path) || "/api/auth/login".equals(path) || path.startsWith("/h2-console")) {

@@ -317,20 +317,46 @@ public class KotakApiClient {
 
             log.info("[KotakApiClient] [OUTBOUND RES] {} {} | Status: {} | Body: {}", method, url, response.statusCode(), responseBody);
 
-            if (responseBody != null && responseBody.trim().startsWith("{")) {
-                return objectMapper.readValue(responseBody, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
-            } else if (responseBody != null && responseBody.trim().startsWith("[")) {
-                List<Object> list = objectMapper.readValue(responseBody, new com.fasterxml.jackson.core.type.TypeReference<List<Object>>() {});
+            if (responseBody == null || responseBody.trim().isEmpty()) {
                 Map<String, Object> resMap = new HashMap<>();
-                resMap.put("data", list);
+                resMap.put("raw", "");
                 return resMap;
+            }
+
+            String trimmed = responseBody.trim();
+            if (trimmed.startsWith("{")) {
+                try {
+                    return objectMapper.readValue(trimmed, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+                } catch (Exception parseEx) {
+                    log.warn("[KotakApiClient] Non-JSON or malformed object response from {} {}: {}", method, url, parseEx.getMessage());
+                    Map<String, Object> resMap = new HashMap<>();
+                    resMap.put("raw", responseBody);
+                    resMap.put("error", "Invalid JSON response: " + parseEx.getMessage());
+                    return resMap;
+                }
+            } else if (trimmed.startsWith("[")) {
+                try {
+                    List<Object> list = objectMapper.readValue(trimmed, new com.fasterxml.jackson.core.type.TypeReference<List<Object>>() {});
+                    Map<String, Object> resMap = new HashMap<>();
+                    resMap.put("data", list);
+                    return resMap;
+                } catch (Exception parseEx) {
+                    log.warn("[KotakApiClient] Non-JSON or malformed array response from {} {}: {}", method, url, parseEx.getMessage());
+                    Map<String, Object> resMap = new HashMap<>();
+                    resMap.put("raw", responseBody);
+                    resMap.put("error", "Invalid JSON array response: " + parseEx.getMessage());
+                    return resMap;
+                }
             } else {
                 Map<String, Object> resMap = new HashMap<>();
                 resMap.put("raw", responseBody);
+                if (response.statusCode() >= 400) {
+                    resMap.put("error", "HTTP " + response.statusCode() + ": " + responseBody);
+                }
                 return resMap;
             }
         } catch (Exception e) {
-            log.error("[KotakApiClient] Request failed: {} {} - {}", method, url, e.getMessage(), e);
+            log.warn("[KotakApiClient] Request failed: {} {} - {}", method, url, e.getMessage());
             Map<String, Object> errMap = new HashMap<>();
             errMap.put("error", e.getMessage());
             return errMap;
