@@ -145,9 +145,16 @@ public class KotakApiClient {
     }
 
     public Map<String, Object> getLimits(Account account) {
-        // Python SDK: client.limits(segment="ALL", exchange="ALL", product="ALL")
-        // Uses account baseUrl or NEO_API_BASE (mis.kotaksecurities.com)
+        // Kotak Neo SDK LimitsAPI: POST /quick/user/limits or /Orders/2.0/quick/user/limits
+        Map<String, Object> body = Map.of("seg", "ALL", "exch", "ALL", "prod", "ALL");
         for (String base : getCandidateBaseUrls(account)) {
+            List<String> postPaths = List.of("/quick/user/limits", "/Orders/2.0/quick/user/limits");
+            for (String path : postPaths) {
+                try {
+                    Map<String, Object> res = postRequest(base + path, body, account);
+                    if (isValidResponse(res)) return res;
+                } catch (Exception ignored) {}
+            }
             try {
                 Map<String, Object> res = getRequest(base + "/limits/v1/margin?segment=ALL&exchange=ALL&product=ALL", account);
                 if (isValidResponse(res)) return res;
@@ -158,30 +165,36 @@ public class KotakApiClient {
 
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> getPositions(Account account) {
-        // Python SDK: client.positions()
+        // Kotak Neo SDK PositionsAPI: GET /quick/user/positions or /Orders/2.0/quick/user/positions
+        List<String> paths = List.of("/quick/user/positions", "/Orders/2.0/quick/user/positions", "/positions/v1/net");
         for (String base : getCandidateBaseUrls(account)) {
-            try {
-                Map<String, Object> res = getRequest(base + "/positions/v1/net", account);
-                Object data = res.get("data");
-                if (data instanceof List<?> list) {
-                    return (List<Map<String, Object>>) list;
-                }
-            } catch (Exception ignored) {}
+            for (String path : paths) {
+                try {
+                    Map<String, Object> res = getRequest(base + path, account);
+                    Object data = res.get("data");
+                    if (data instanceof List<?> list) {
+                        return (List<Map<String, Object>>) list;
+                    }
+                } catch (Exception ignored) {}
+            }
         }
         return Collections.emptyList();
     }
 
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> getOrderBook(Account account) {
-        // Python SDK: client.order_report()
+        // Kotak Neo SDK OrderReportAPI: GET /quick/user/orders or /Orders/2.0/quick/user/orders
+        List<String> paths = List.of("/quick/user/orders", "/Orders/2.0/quick/user/orders", "/orders/v1/orderBook");
         for (String base : getCandidateBaseUrls(account)) {
-            try {
-                Map<String, Object> res = getRequest(base + "/orders/v1/orderBook", account);
-                Object data = res.get("data");
-                if (data instanceof List<?> list) {
-                    return (List<Map<String, Object>>) list;
-                }
-            } catch (Exception ignored) {}
+            for (String path : paths) {
+                try {
+                    Map<String, Object> res = getRequest(base + path, account);
+                    Object data = res.get("data");
+                    if (data instanceof List<?> list) {
+                        return (List<Map<String, Object>>) list;
+                    }
+                } catch (Exception ignored) {}
+            }
         }
         return Collections.emptyList();
     }
@@ -282,6 +295,7 @@ public class KotakApiClient {
 
             if (sid != null && !sid.isEmpty()) {
                 builder.header("sid", sid);
+                builder.header("Sid", sid);
             }
             if (neoToken != null && !neoToken.isEmpty()) {
                 builder.header("Auth", neoToken);
