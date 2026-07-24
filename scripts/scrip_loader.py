@@ -81,14 +81,37 @@ def parse_expiry_date(scrip_ref: str, raw_expiry: str) -> str | None:
             pass
     return None
 
+def http_get_bytes(url: str, headers: dict = None, timeout: float = 30.0) -> bytes:
+    if headers is None:
+        headers = {"User-Agent": "Mozilla/5.0", "Accept-Encoding": "gzip, deflate"}
+
+    if httpx is not None:
+        try:
+            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+                resp = client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    return resp.content
+        except Exception:
+            pass
+
+    import urllib.request
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = resp.read()
+        if resp.headers.get("Content-Encoding") == "gzip" or (len(data) > 2 and data[0] == 0x1F and data[1] == 0x8B):
+            try:
+                with gzip.GzipFile(fileobj=io.BytesIO(data)) as gzf:
+                    return gzf.read()
+            except Exception:
+                pass
+        return data
+
 def download_bytes(url: str) -> bytes:
     headers = {"User-Agent": "Mozilla/5.0", "Accept-Encoding": "gzip, deflate"}
     sys.stderr.write(f"[ScripLoader] Downloading {url}...\n")
     sys.stderr.flush()
-    with httpx.Client(timeout=15.0, follow_redirects=True) as client:
-        resp = client.get(url, headers=headers)
-        resp.raise_for_status()
-        raw_bytes = resp.content
+
+    raw_bytes = http_get_bytes(url, headers=headers, timeout=30.0)
 
     sys.stderr.write(f"[ScripLoader] Downloaded {len(raw_bytes)} bytes from {url}\n")
     sys.stderr.flush()
@@ -189,9 +212,9 @@ def get_candidate_urls(cat_key: str, active_account: dict = None) -> list[str]:
                 "Auth": active_account.get("neoToken", ""),
                 "User-Agent": "Mozilla/5.0"
             }
-            res = httpx.get(f"{api_base}/v1/scrip-master/urls", headers=headers, timeout=10.0)
-            if res.status_code == 200:
-                data = res.json()
+            raw = http_get_bytes(f"{api_base}/v1/scrip-master/urls", headers=headers, timeout=10.0)
+            if raw:
+                data = json.loads(raw.decode("utf-8", errors="replace"))
                 def extract(obj):
                     if isinstance(obj, str) and (cat_key_lower in obj.lower() or ".csv" in obj.lower()):
                         if cat_key_lower in obj.lower(): urls.append(obj)
