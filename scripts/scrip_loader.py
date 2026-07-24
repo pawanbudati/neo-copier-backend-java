@@ -7,8 +7,6 @@ import zipfile
 import gzip
 from datetime import datetime, date, timedelta
 from pathlib import Path
-import httpx
-import psycopg
 
 # Load .env if present
 def load_env():
@@ -248,6 +246,20 @@ def get_candidate_urls(cat_key: str, active_account: dict = None) -> list[str]:
             res.append(u)
     return res
 
+def get_db_connection():
+    try:
+        import psycopg
+        return psycopg.connect(DATABASE_URL, prepare_threshold=None)
+    except ImportError:
+        try:
+            import psycopg2
+            return psycopg2.connect(DATABASE_URL)
+        except ImportError:
+            sys.stderr.write("[ScripLoader ERROR] Python package 'psycopg' (psycopg3 or psycopg2) is not installed.\n")
+            sys.stderr.write("[ScripLoader ERROR] Run: pip install 'psycopg[binary]'\n")
+            sys.stderr.flush()
+            raise ModuleNotFoundError("Python package 'psycopg' is missing. Please run 'pip install psycopg[binary]' on the server.")
+
 def save_scrips_to_postgres(scrips_tuples: list[tuple], exchange_to_clear: str = None):
     if not scrips_tuples and not exchange_to_clear:
         return 0
@@ -255,7 +267,7 @@ def save_scrips_to_postgres(scrips_tuples: list[tuple], exchange_to_clear: str =
     sys.stderr.write(f"[ScripLoader] Saving {len(scrips_tuples)} scrips to PostgreSQL...\n")
     sys.stderr.flush()
 
-    with psycopg.connect(DATABASE_URL, prepare_threshold=None) as conn:
+    with get_db_connection() as conn:
         with conn.cursor() as cur:
             if exchange_to_clear:
                 cur.execute("DELETE FROM scrips WHERE exchange = %s", (exchange_to_clear,))
@@ -340,7 +352,7 @@ def load_daily_options(active_account: dict = None):
             except Exception:
                 continue
 
-    with psycopg.connect(DATABASE_URL, prepare_threshold=None) as conn:
+    with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM scrips")
             total = cur.fetchone()[0]
@@ -354,7 +366,7 @@ def clear_category(cat_key: str):
     return {"success": True, "category": cat_key, "totalCount": total}
 
 def clear_all():
-    with psycopg.connect(DATABASE_URL, prepare_threshold=None) as conn:
+    with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM scrips")
             conn.commit()
