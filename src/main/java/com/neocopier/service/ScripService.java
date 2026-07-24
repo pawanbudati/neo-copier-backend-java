@@ -247,299 +247,73 @@ public class ScripService {
     }
 
     @Transactional
+    private Map<String, Object> executePythonScripLoader(List<String> commandArgs) {
+        try {
+            List<String> fullCmd = new ArrayList<>();
+            fullCmd.add("python");
+            fullCmd.add("scripts/scrip_loader.py");
+            fullCmd.addAll(commandArgs);
+
+            ProcessBuilder pb = new ProcessBuilder(fullCmd);
+            pb.directory(new java.io.File("."));
+
+            Process proc = pb.start();
+            String stdout = new String(proc.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            String stderr = new String(proc.getErrorStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            int exitCode = proc.waitFor();
+
+            if (stderr != null && !stderr.trim().isEmpty()) {
+                log.info("[PythonScripLoader Log]\n{}", stderr.trim());
+            }
+
+            if (exitCode != 0) {
+                log.error("[PythonScripLoader] Script failed with exit code {}", exitCode);
+                return Map.of("success", false, "error", "Python loader failed with code " + exitCode);
+            }
+
+            if (stdout != null && !stdout.trim().isEmpty()) {
+                com.fasterxml.jackson.databind.JsonNode jsonNode = objectMapper.readTree(stdout.trim());
+                @SuppressWarnings("unchecked")
+                Map<String, Object> resultMap = objectMapper.convertValue(jsonNode, Map.class);
+                populateMemoryCache();
+                return resultMap;
+            }
+        } catch (Exception e) {
+            log.error("[PythonScripLoader] Exception executing Python scrip loader: {}", e.getMessage(), e);
+            return Map.of("success", false, "error", e.getMessage());
+        }
+        return Map.of("success", false, "error", "No response from Python scrip loader");
+    }
+
     public Map<String, Object> loadDailyIndexOptions(Account activeAccount) {
-        log.info("[ScripMaster] Loading daily Nifty & Sensex index options (Filtering past expiries)...");
-        LocalDate today = LocalDate.now();
-
-        List<Scrip> niftyOptions = downloadAndFilterScrips("nse_fo", activeAccount, scrip -> {
-            if (scrip == null) return false;
-            String sym = scrip.getTradingSymbol() != null ? scrip.getTradingSymbol().toUpperCase() : "";
-            String inst = scrip.getInstrumentName() != null ? scrip.getInstrumentName().toUpperCase() : "";
-            String ref = scrip.getScripRefKey() != null ? scrip.getScripRefKey().toUpperCase() : "";
-            
-            boolean isNifty = sym.contains("NIFTY") || inst.contains("NIFTY") || ref.contains("NIFTY");
-            boolean isOption = "CE".equalsIgnoreCase(scrip.getSegment()) || "PE".equalsIgnoreCase(scrip.getSegment()) ||
-                               inst.contains("OPT") || sym.endsWith("CE") || sym.endsWith("PE");
-            boolean isNotExpired = scrip.getExpiry() == null || !scrip.getExpiry().isBefore(today);
-
-            return isNifty && isOption && isNotExpired;
-        });
-
-        List<Scrip> sensexOptions = downloadAndFilterScrips("bse_fo", activeAccount, scrip -> {
-            if (scrip == null) return false;
-            String sym = scrip.getTradingSymbol() != null ? scrip.getTradingSymbol().toUpperCase() : "";
-            String inst = scrip.getInstrumentName() != null ? scrip.getInstrumentName().toUpperCase() : "";
-            String ref = scrip.getScripRefKey() != null ? scrip.getScripRefKey().toUpperCase() : "";
-
-            boolean isSensex = sym.contains("SENSEX") || sym.contains("BSX") || inst.contains("SENSEX") || ref.contains("SENSEX");
-            boolean isOption = "CE".equalsIgnoreCase(scrip.getSegment()) || "PE".equalsIgnoreCase(scrip.getSegment()) ||
-                               inst.contains("OPT") || sym.endsWith("CE") || sym.endsWith("PE");
-            boolean isNotExpired = scrip.getExpiry() == null || !scrip.getExpiry().isBefore(today);
-
-            return isSensex && isOption && isNotExpired;
-        });
-
-        // Clear ALL existing scrips from DB before saving fresh filtered index options
-        scripRepository.deleteAll();
-
-        List<Scrip> allNewScrips = new ArrayList<>();
-        allNewScrips.addAll(niftyOptions);
-        allNewScrips.addAll(sensexOptions);
-
-        if (!allNewScrips.isEmpty()) {
-            saveScripsInBatches(allNewScrips);
-        }
-
-        // Clear RAM cache and reload freshly from DB
-        int cachedCount = populateMemoryCache();
-        log.info("[ScripMaster] Daily index options loaded. Nifty: {}, Sensex: {}. Total in RAM: {}",
-                niftyOptions.size(), sensexOptions.size(), cachedCount);
-
-        return Map.of(
-                "success", true,
-                "niftyCount", niftyOptions.size(),
-                "sensexCount", sensexOptions.size(),
-                "totalCount", cachedCount
-        );
-    }
-
-    public List<Scrip> downloadAndFilterScrips(String categoryKey, Account activeAccount, java.util.function.Predicate<Scrip> filterPredicate) {
-        String catKeyLower = categoryKey.toLowerCase();
-        List<String> candidateUrls = new ArrayList<>();
-
+        log.info("[ScripMaster] Delegating daily Nifty & Sensex index options loading to Python script...");
+        String accountJson = "";
         if (activeAccount != null) {
             try {
-                Object masterPayload = kotakApiClient.getScripMaster(activeAccount);
-                List<String> extracted = extractUrls(masterPayload);
-                for (String u : extracted) {
-                    if (u.toLowerCase().contains(catKeyLower)) {
-                        candidateUrls.add(u);
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("[ScripMaster] Failed to fetch scrip master from broker for {}: {}", categoryKey, e.getMessage());
-            }
+                accountJson = objectMapper.writeValueAsString(activeAccount);
+            } catch (Exception ignored) {}
         }
-
-        for (String fallbackUrl : getFallbackUrls(catKeyLower)) {
-            if (!candidateUrls.contains(fallbackUrl)) {
-                candidateUrls.add(fallbackUrl);
-            }
-        }
-
-        for (String targetUrl : candidateUrls) {
-            if (targetUrl == null || targetUrl.trim().isEmpty()) {
-                continue;
-            }
-            try {
-                log.info("[ScripMaster] Downloading {} scrip master from {}", categoryKey, targetUrl);
-                byte[] csvBytes = downloadBytes(targetUrl);
-
-                List<Scrip> filtered = new ArrayList<>();
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(new java.io.ByteArrayInputStream(csvBytes), java.nio.charset.StandardCharsets.UTF_8))) {
-                    String headerLine = reader.readLine();
-                    if (headerLine != null) {
-                        String[] headers = headerLine.replace("\ufeff", "").split(",");
-                        ScripParser.HeaderIndexMap indices = ScripParser.HeaderIndexMap.from(headers);
-                        String line;
-                        while ((line = reader.readLine()) != null) {
-                            if (line.isEmpty()) continue;
-                            String[] parts = line.split(",", -1);
-                            Scrip scrip = ScripParser.parseRowFast(parts, indices);
-                            if (scrip != null && filterPredicate.test(scrip)) {
-                                filtered.add(scrip);
-                            }
-                        }
-                    }
-                }
-                log.info("[ScripMaster] Successfully parsed and filtered {} scrips from {}", filtered.size(), targetUrl);
-                if (!filtered.isEmpty()) {
-                    return filtered;
-                }
-            } catch (Exception e) {
-                log.warn("[ScripMaster] Failed attempt downloading {} from {}: {}", categoryKey, targetUrl, e.getMessage());
-            }
-        }
-        return Collections.emptyList();
+        return executePythonScripLoader(List.of("load_daily_options", accountJson));
     }
 
-    private byte[] downloadBytes(String targetUrl) throws Exception {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(targetUrl))
-                .timeout(Duration.ofSeconds(60))
-                .header("User-Agent", "Mozilla/5.0")
-                .header("Accept-Encoding", "gzip, deflate")
-                .GET()
-                .build();
-
-        HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
-        if (response.statusCode() != 200) {
-            throw new java.io.IOException("HTTP status " + response.statusCode() + " from " + targetUrl);
-        }
-
-        byte[] rawBytes = response.body();
-        if (rawBytes == null || rawBytes.length == 0) {
-            throw new java.io.IOException("Empty response body from " + targetUrl);
-        }
-
-        // Handle ZIP compressed files (magic header PK 0x50 0x4B 0x03 0x04)
-        if (rawBytes.length > 4 && rawBytes[0] == 0x50 && rawBytes[1] == 0x4B) {
-            try (java.util.zip.ZipInputStream zis = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(rawBytes))) {
-                java.util.zip.ZipEntry entry = zis.getNextEntry();
-                if (entry != null) {
-                    return zis.readAllBytes();
-                }
-            }
-        }
-
-        // Handle GZIP compressed files (magic header 0x1F 0x8B)
-        if (rawBytes.length > 2 && (rawBytes[0] & 0xFF) == 0x1F && (rawBytes[1] & 0xFF) == 0x8B) {
-            try (java.util.zip.GZIPInputStream gzis = new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(rawBytes))) {
-                return gzis.readAllBytes();
-            }
-        }
-
-        return rawBytes;
-    }
-
-    @Transactional
     public Map<String, Object> loadScripCategory(String categoryKey, Account activeAccount) {
-        String catKeyLower = categoryKey != null ? categoryKey.toLowerCase() : "";
-        List<String> candidateUrls = new ArrayList<>();
-
+        log.info("[ScripMaster] Delegating scrip loading for category {} to Python script...", categoryKey);
+        String accountJson = "";
         if (activeAccount != null) {
             try {
-                Object masterPayload = kotakApiClient.getScripMaster(activeAccount);
-                List<String> extracted = extractUrls(masterPayload);
-                for (String u : extracted) {
-                    if (u.toLowerCase().contains(catKeyLower)) {
-                        candidateUrls.add(u);
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("[ScripMaster] Failed to fetch scrip master from broker for {}: {}", categoryKey, e.getMessage());
-            }
+                accountJson = objectMapper.writeValueAsString(activeAccount);
+            } catch (Exception ignored) {}
         }
-
-        for (String fallbackUrl : getFallbackUrls(catKeyLower)) {
-            if (!candidateUrls.contains(fallbackUrl)) {
-                candidateUrls.add(fallbackUrl);
-            }
-        }
-
-        if (candidateUrls.isEmpty()) {
-            return Map.of("success", false, "error", "Scrip master URL for " + categoryKey + " not found from broker.");
-        }
-
-        for (String targetUrl : candidateUrls) {
-            try {
-                log.info("[ScripMaster] Downloading {} scrip master from {}", categoryKey, targetUrl);
-                byte[] csvBytes = downloadBytes(targetUrl);
-
-                List<Scrip> parsedScrips = new ArrayList<>();
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(new java.io.ByteArrayInputStream(csvBytes), java.nio.charset.StandardCharsets.UTF_8))) {
-                    String headerLine = reader.readLine();
-                    if (headerLine != null) {
-                        String[] headers = headerLine.replace("\ufeff", "").split(",");
-                        ScripParser.HeaderIndexMap indices = ScripParser.HeaderIndexMap.from(headers);
-                        String line;
-                        while ((line = reader.readLine()) != null) {
-                            if (line.isEmpty()) continue;
-                            String[] parts = line.split(",", -1);
-                            Scrip scrip = ScripParser.parseRowFast(parts, indices);
-                            if (scrip != null) {
-                                parsedScrips.add(scrip);
-                            }
-                        }
-                    }
-                }
-
-                if (!parsedScrips.isEmpty()) {
-                    String exchange = parsedScrips.get(0).getExchange();
-                    scripRepository.deleteByExchange(exchange);
-                    saveScripsInBatches(parsedScrips);
-                    populateMemoryCache();
-                    log.info("[ScripMaster] Successfully saved {} scrips for category {}", parsedScrips.size(), categoryKey);
-                    return Map.of("success", true, "category", categoryKey, "count", parsedScrips.size(), "totalCount", scripRepository.count());
-                }
-            } catch (Exception e) {
-                log.warn("[ScripMaster] Failed attempt downloading {} from {}: {}", categoryKey, targetUrl, e != null ? e.toString() : "Unknown error");
-            }
-        }
-
-        return Map.of("success", false, "error", "Failed to download scrip master for " + categoryKey + " from all available URLs.");
+        return executePythonScripLoader(List.of("load_category", categoryKey, accountJson));
     }
 
-    @Transactional
-    public void saveScripsInBatches(List<Scrip> scrips) {
-        if (scrips == null || scrips.isEmpty()) return;
-        int batchSize = 2500;
-        for (int i = 0; i < scrips.size(); i += batchSize) {
-            int end = Math.min(i + batchSize, scrips.size());
-            scripRepository.saveAll(scrips.subList(i, end));
-            scripRepository.flush();
-            if (entityManager != null) {
-                entityManager.clear();
-            }
-        }
-    }
-
-    private List<String> getFallbackUrls(String categoryKey) {
-        String catKeyLower = categoryKey != null ? categoryKey.toLowerCase() : "";
-        List<String> dates = List.of(
-                LocalDate.now().toString(),
-                LocalDate.now().minusDays(1).toString(),
-                LocalDate.now().minusDays(2).toString()
-        );
-
-        List<String> urls = new ArrayList<>();
-        for (String dateStr : dates) {
-            if ("nse_cm".equals(catKeyLower)) {
-                urls.add("https://lapi.kotaksecurities.com/wso2-scripmaster/v1/prod/" + dateStr + "/transformed-v1/nse_cm-v1.csv");
-                urls.add("https://lapi.kotaksecurities.com/wso2-scripmaster/v1/prod/" + dateStr + "/transformed/nse_cm.csv");
-            } else if ("bse_cm".equals(catKeyLower)) {
-                urls.add("https://lapi.kotaksecurities.com/wso2-scripmaster/v1/prod/" + dateStr + "/transformed-v1/bse_cm-v1.csv");
-                urls.add("https://lapi.kotaksecurities.com/wso2-scripmaster/v1/prod/" + dateStr + "/transformed/bse_cm.csv");
-            } else {
-                urls.add("https://lapi.kotaksecurities.com/wso2-scripmaster/v1/prod/" + dateStr + "/transformed/" + catKeyLower + ".csv");
-            }
-        }
-        return urls;
-    }
-
-    @Transactional
     public Map<String, Object> clearScripCategory(String categoryKey) {
-        String exchange = switch (categoryKey.toLowerCase()) {
-            case "nse_fo" -> "NFO";
-            case "bse_fo" -> "BFO";
-            case "nse_cm" -> "NSE";
-            case "bse_cm" -> "BSE";
-            case "mcx_fo" -> "MCX";
-            case "cde_fo" -> "CDE";
-            default -> categoryKey.toUpperCase();
-        };
-
-        int cleared = scripRepository.deleteByExchange(exchange);
-        populateMemoryCache();
-        return Map.of("success", true, "category", categoryKey, "clearedCount", cleared, "totalCount", scripRepository.count());
+        log.info("[ScripMaster] Delegating clearing category {} to Python script...", categoryKey);
+        return executePythonScripLoader(List.of("clear_category", categoryKey));
     }
 
-    @Transactional
     public Map<String, Object> clearAllScrips() {
-        scripRepository.deleteAll();
-        populateMemoryCache();
-        return Map.of("success", true, "clearedAll", true);
-    }
-
-    private List<String> extractUrls(Object payload) {
-        List<String> urls = new ArrayList<>();
-        if (payload instanceof String s) {
-            if (s.contains(".csv") || s.startsWith("http")) urls.add(s);
-        } else if (payload instanceof List<?> list) {
-            for (Object item : list) urls.addAll(extractUrls(item));
-        } else if (payload instanceof Map<?, ?> map) {
-            for (Object value : map.values()) urls.addAll(extractUrls(value));
-        }
-        return urls;
+        log.info("[ScripMaster] Delegating clearing all scrips to Python script...");
+        return executePythonScripLoader(List.of("clear_all"));
     }
 }
