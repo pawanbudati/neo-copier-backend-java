@@ -19,6 +19,9 @@ public class AuthService {
     @Value("${admin.password:admin}")
     private String adminPasswordConfig;
 
+    @Value("${auth.enabled:false}")
+    private boolean authEnabled;
+
     private String activeAdminPassword;
     private final String currentSessionToken = UUID.randomUUID().toString();
 
@@ -30,9 +33,19 @@ public class AuthService {
             this.activeAdminPassword = envPassword.trim();
             log.info("[Auth] Admin password loaded from .env file.");
         }
+        if (!authEnabled) {
+            log.info("[Auth] Dev environment detected: Login authentication is DISABLED.");
+        }
+    }
+
+    public boolean isAuthDisabled() {
+        return !authEnabled;
     }
 
     public boolean validatePassword(String password) {
+        if (!authEnabled) {
+            return true;
+        }
         return activeAdminPassword != null && activeAdminPassword.equals(password);
     }
 
@@ -41,6 +54,9 @@ public class AuthService {
     }
 
     public boolean validateSessionToken(String token) {
+        if (!authEnabled) {
+            return true;
+        }
         return token != null && token.equals(currentSessionToken);
     }
 
