@@ -4,6 +4,8 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "accounts")
@@ -21,10 +23,12 @@ public class Account {
     private String ucc;
     private String mpin;
 
-    @Column(name = "consumerkey", length = 4096, columnDefinition = "TEXT")
+    @Column(name = "consumerkey", columnDefinition = "TEXT")
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     private String consumerKey;
 
-    @Column(name = "totpsecret", length = 4096, columnDefinition = "TEXT")
+    @Column(name = "totpsecret", columnDefinition = "TEXT")
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     private String totpSecret;
 
     private Double multiplier = 1.0;
@@ -33,28 +37,36 @@ public class Account {
     @Column(name = "lastlogin")
     private String lastLogin;
 
-    @Column(name = "accesstoken", length = 4096, columnDefinition = "TEXT")
+    @Column(name = "accesstoken", columnDefinition = "TEXT")
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     private String accessToken;
 
-    @Column(length = 4096, columnDefinition = "TEXT")
+    @Column(columnDefinition = "TEXT")
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     private String sid;
 
-    @Column(name = "neotoken", length = 4096, columnDefinition = "TEXT")
+    @Column(name = "neotoken", columnDefinition = "TEXT")
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     private String neoToken;
 
-    @Column(length = 4096, columnDefinition = "TEXT")
+    @Column(columnDefinition = "TEXT")
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     private String rid;
 
-    @Column(name = "hsserverid", length = 4096, columnDefinition = "TEXT")
+    @Column(name = "hsserverid", columnDefinition = "TEXT")
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     private String hsServerId;
 
-    @Column(name = "datacenter", length = 4096, columnDefinition = "TEXT")
+    @Column(name = "datacenter", columnDefinition = "TEXT")
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     private String dataCenter;
 
-    @Column(name = "baseurl", length = 4096, columnDefinition = "TEXT")
+    @Column(name = "baseurl", columnDefinition = "TEXT")
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     private String baseUrl;
 
-    @Column(name = "errormessage", length = 4096, columnDefinition = "TEXT")
+    @Column(name = "errormessage", columnDefinition = "TEXT")
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     private String errorMessage;
 
     @Column(name = "createdat")

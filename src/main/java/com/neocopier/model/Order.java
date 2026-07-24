@@ -4,6 +4,8 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "orders")
@@ -49,6 +51,7 @@ public class Order {
     private String status;
 
     @Column(name = "errormessage", columnDefinition = "TEXT")
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
     private String errorMessage;
 
     private String timestamp;
