@@ -65,11 +65,12 @@ public class AccountService {
         return Optional.empty();
     }
 
+    @Transactional
     public Account saveAccount(Account account) {
         if ("master".equalsIgnoreCase(account.getRole())) {
             List<Account> existingMasters = accountRepository.findByRole("master");
             for (Account master : existingMasters) {
-                if (!master.getId().equals(account.getId())) {
+                if (account.getId() == null || !master.getId().equals(account.getId())) {
                     master.setRole("slave");
                     accountRepository.save(master);
                     log.info("[Account] Demoted '{}' to slave as '{}' is now master.", master.getNickname(), account.getNickname());
@@ -77,30 +78,45 @@ public class AccountService {
             }
         }
 
-        if (account.getId() == null || account.getId().isEmpty()) {
-            account.setId("ACC_" + System.currentTimeMillis() + "_" + (new Random().nextInt(900) + 100));
-            account.setCreatedAt(LocalDateTime.now().toString());
-        } else {
+        Account targetAccount;
+        if (account.getId() != null && !account.getId().isEmpty()) {
             Optional<Account> existingOpt = accountRepository.findById(account.getId());
             if (existingOpt.isPresent()) {
-                Account existing = existingOpt.get();
-                if (account.getTotpSecret() == null || account.getTotpSecret().trim().isEmpty()) {
-                    account.setTotpSecret(existing.getTotpSecret());
-                }
-                if (account.getMpin() == null || account.getMpin().trim().isEmpty()) {
-                    account.setMpin(existing.getMpin());
-                }
-                if (account.getConsumerKey() == null || account.getConsumerKey().trim().isEmpty()) {
-                    account.setConsumerKey(existing.getConsumerKey());
+                targetAccount = existingOpt.get();
+            } else {
+                targetAccount = account;
+                if (targetAccount.getCreatedAt() == null) {
+                    targetAccount.setCreatedAt(LocalDateTime.now().toString());
                 }
             }
+        } else {
+            targetAccount = new Account();
+            targetAccount.setId("ACC_" + System.currentTimeMillis() + "_" + (new Random().nextInt(900) + 100));
+            targetAccount.setCreatedAt(LocalDateTime.now().toString());
         }
 
-        if (account.getTotpSecret() != null) {
-            account.setTotpSecret(account.getTotpSecret().replaceAll("\\s+", ""));
+        if (account.getNickname() != null) targetAccount.setNickname(account.getNickname());
+        if (account.getRole() != null) targetAccount.setRole(account.getRole());
+        if (account.getMobileNumber() != null) targetAccount.setMobileNumber(account.getMobileNumber());
+        if (account.getUcc() != null) targetAccount.setUcc(account.getUcc());
+        if (account.getMultiplier() != null) targetAccount.setMultiplier(account.getMultiplier());
+
+        if (account.getMpin() != null && !account.getMpin().trim().isEmpty()) {
+            targetAccount.setMpin(account.getMpin().trim());
+        }
+        if (account.getConsumerKey() != null && !account.getConsumerKey().trim().isEmpty()) {
+            targetAccount.setConsumerKey(account.getConsumerKey().trim());
+        }
+        if (account.getTotpSecret() != null && !account.getTotpSecret().trim().isEmpty()) {
+            targetAccount.setTotpSecret(account.getTotpSecret().replaceAll("\\s+", "").toUpperCase());
         }
 
-        return accountRepository.save(account);
+        if (targetAccount.getStatus() == null) {
+            targetAccount.setStatus("disconnected");
+        }
+
+        log.info("[Account] Saving account '{}' (ID: {}, Role: {})", targetAccount.getNickname(), targetAccount.getId(), targetAccount.getRole());
+        return accountRepository.save(targetAccount);
     }
 
     public void deleteAccount(String accountId) {

@@ -8,11 +8,16 @@ import com.neocopier.util.TotpUtils;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.*;
 
 @RestController
 @RequestMapping("/api/accounts")
 public class AccountController {
+
+    private static final Logger log = LoggerFactory.getLogger(AccountController.class);
 
     private final AccountService accountService;
     private final FeedService feedService;
@@ -31,12 +36,21 @@ public class AccountController {
 
     @PostMapping
     public ResponseEntity<Map<String, Object>> saveAccount(@RequestBody Account body) {
-        if (body.getNickname() == null || body.getRole() == null || body.getMobileNumber() == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Missing required fields (nickname, role, mobileNumber)"));
+        try {
+            if (body.getNickname() == null || body.getRole() == null || body.getMobileNumber() == null) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Missing required fields (nickname, role, mobileNumber)"));
+            }
+            Account saved = accountService.saveAccount(body);
+            try {
+                feedService.connectMarketFeed();
+            } catch (Exception feedEx) {
+                log.warn("[AccountController] Market feed reconnect notice: {}", feedEx.getMessage());
+            }
+            return ResponseEntity.ok(Map.of("success", true, "accountId", saved.getId()));
+        } catch (Exception e) {
+            log.error("[AccountController] Failed to save account: {}", e.getMessage(), e);
+            return ResponseEntity.status(500).body(Map.of("error", "Failed to save account: " + e.getMessage()));
         }
-        Account saved = accountService.saveAccount(body);
-        feedService.connectMarketFeed();
-        return ResponseEntity.ok(Map.of("success", true, "accountId", saved.getId()));
     }
 
     @DeleteMapping("/{account_id}")
