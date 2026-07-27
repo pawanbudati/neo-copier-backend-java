@@ -379,7 +379,7 @@ public class TradingService {
     }
 
     public Map<String, Object> pollOrderFinalStatus(Account account, String orderId) {
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 2; i++) {
             Map<String, Object> live = getOrderLiveStatus(account, orderId);
             if (live != null) {
                 String status = (String) live.get("status");
@@ -394,7 +394,7 @@ public class TradingService {
                 }
             }
             try {
-                Thread.sleep(250);
+                Thread.sleep(200);
             } catch (InterruptedException ignored) {}
         }
         return Map.of("success", true, "status", "SUCCESS");
