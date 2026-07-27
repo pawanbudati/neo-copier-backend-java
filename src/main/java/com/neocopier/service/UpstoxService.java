@@ -27,6 +27,8 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 
 @Service
@@ -51,6 +53,7 @@ public class UpstoxService {
     private final ObjectMapper objectMapper;
     private final Map<String, String> instrumentKeyCache = new ConcurrentHashMap<>();
     private final Map<String, String> symbolToInstrumentKeyMap = new ConcurrentHashMap<>();
+    private final Map<String, String> optionContractMap = new ConcurrentHashMap<>();
     private volatile boolean instrumentsIndexed = false;
 
     public UpstoxService() {
@@ -94,24 +97,33 @@ public class UpstoxService {
                             continue;
                         }
                         String[] cols = line.split(",");
-                        if (cols.length >= 3) {
+                        if (cols.length >= 11) {
                             String instKey = cols[0].replace("\"", "").trim();
-                            String exchToken = cols[1].replace("\"", "").trim();
                             String tradingSym = cols[2].replace("\"", "").trim().toUpperCase();
+                            String name = cols[3].replace("\"", "").trim().toUpperCase();
+                            String strikeStr = cols[6].replace("\"", "").trim();
+                            String optType = cols[10].replace("\"", "").trim().toUpperCase();
 
                             if (!instKey.isEmpty()) {
                                 if (!tradingSym.isEmpty()) {
                                     symbolToInstrumentKeyMap.put(tradingSym, instKey);
                                 }
-                                if (!exchToken.isEmpty()) {
-                                    symbolToInstrumentKeyMap.put(exchToken, instKey);
+                                // Index options by UNDERLYING|STRIKE|OPTION_TYPE (e.g. NIFTY|24000.0|CE, SENSEX|77000.0|PE)
+                                if (!name.isEmpty() && !strikeStr.isEmpty() && !optType.isEmpty() && (optType.equals("CE") || optType.equals("PE"))) {
+                                    try {
+                                        double strike = Double.parseDouble(strikeStr);
+                                        String optKey1 = String.format(Locale.US, "%s|%.1f|%s", name, strike, optType);
+                                        String optKey2 = String.format(Locale.US, "%s|%.0f|%s", name, strike, optType);
+                                        optionContractMap.putIfAbsent(optKey1, instKey);
+                                        optionContractMap.putIfAbsent(optKey2, instKey);
+                                    } catch (NumberFormatException ignored) {}
                                 }
                                 count++;
                             }
                         }
                     }
                     instrumentsIndexed = true;
-                    log.info("[UpstoxService] Successfully indexed {} Upstox instruments into memory!", count);
+                    log.info("[UpstoxService] Successfully indexed {} Upstox instruments and {} option contracts into memory!", count, optionContractMap.size());
                 }
             } catch (Exception e) {
                 log.warn("[UpstoxService] Could not index Upstox instruments: {}", e.getMessage());
@@ -300,78 +312,81 @@ public class UpstoxService {
     }
 
     public String resolveInstrumentKey(String token, Scrip scrip) {
-        if (token == null) return null;
+        if (token == null && scrip == null) return null;
 
-        if (instrumentKeyCache.containsKey(token)) {
-            return instrumentKeyCache.get(token);
+        String cacheKey = (scrip != null && scrip.getScriptToken() != null) ? scrip.getScriptToken() : token;
+        if (cacheKey != null && instrumentKeyCache.containsKey(cacheKey)) {
+            return instrumentKeyCache.get(cacheKey);
         }
 
-        // 1. Prioritize direct Master Index map lookup by token, tradingSymbol, scripRefKey, instrumentName
-        List<String> candidates = new ArrayList<>();
         if (scrip != null) {
-            if (scrip.getTradingSymbol() != null) candidates.add(scrip.getTradingSymbol().trim().toUpperCase());
-            if (scrip.getScripRefKey() != null) candidates.add(scrip.getScripRefKey().trim().toUpperCase());
-            if (scrip.getInstrumentName() != null) candidates.add(scrip.getInstrumentName().trim().toUpperCase());
-        }
-        candidates.add(token.trim().toUpperCase());
+            String tradingSym = scrip.getTradingSymbol() != null ? scrip.getTradingSymbol().trim().toUpperCase() : "";
+            String refKey = scrip.getScripRefKey() != null ? scrip.getScripRefKey().trim().toUpperCase() : "";
+            String instName = scrip.getInstrumentName() != null ? scrip.getInstrumentName().trim().toUpperCase() : "";
+            String segment = scrip.getSegment() != null ? scrip.getSegment().toUpperCase() : "";
 
-        for (String cand : candidates) {
-            if (cand.isEmpty()) continue;
-            if (symbolToInstrumentKeyMap.containsKey(cand)) {
-                String matchedKey = symbolToInstrumentKeyMap.get(cand);
-                log.info("[UpstoxService] Master Index match for candidate '{}': {}", cand, matchedKey);
-                instrumentKeyCache.put(token, matchedKey);
+            boolean isOption = instName.contains("OPT") || segment.equals("CE") || segment.equals("PE")
+                    || tradingSym.endsWith("CE") || tradingSym.endsWith("PE") || refKey.endsWith("CE") || refKey.endsWith("PE");
+
+            if (isOption) {
+                String optType = (segment.equals("CE") || segment.equals("PE")) ? segment :
+                        (tradingSym.endsWith("CE") || refKey.endsWith("CE") ? "CE" : "PE");
+                String name = extractUnderlyingName(tradingSym, refKey, instName);
+                Double strike = extractStrikePrice(scrip);
+
+                if (strike != null && strike > 0 && name != null) {
+                    String optKey1 = String.format(Locale.US, "%s|%.1f|%s", name, strike, optType);
+                    String optKey2 = String.format(Locale.US, "%s|%.0f|%s", name, strike, optType);
+
+                    if (optionContractMap.containsKey(optKey1)) {
+                        String matchedKey = optionContractMap.get(optKey1);
+                        log.info("[UpstoxService] Matched Option Contract (key1): {} -> {}", optKey1, matchedKey);
+                        if (cacheKey != null) instrumentKeyCache.put(cacheKey, matchedKey);
+                        return matchedKey;
+                    }
+                    if (optionContractMap.containsKey(optKey2)) {
+                        String matchedKey = optionContractMap.get(optKey2);
+                        log.info("[UpstoxService] Matched Option Contract (key2): {} -> {}", optKey2, matchedKey);
+                        if (cacheKey != null) instrumentKeyCache.put(cacheKey, matchedKey);
+                        return matchedKey;
+                    }
+                }
+            }
+
+            // Direct tradingSymbol / refKey lookup
+            if (!tradingSym.isEmpty() && symbolToInstrumentKeyMap.containsKey(tradingSym)) {
+                String matchedKey = symbolToInstrumentKeyMap.get(tradingSym);
+                if (cacheKey != null) instrumentKeyCache.put(cacheKey, matchedKey);
                 return matchedKey;
             }
-            String cleanCand = cand.replaceAll("-(EQ|BE|BZ|SM)$", "");
-            if (symbolToInstrumentKeyMap.containsKey(cleanCand)) {
-                String matchedKey = symbolToInstrumentKeyMap.get(cleanCand);
-                log.info("[UpstoxService] Master Index clean match for candidate '{}': {}", cleanCand, matchedKey);
-                instrumentKeyCache.put(token, matchedKey);
+            if (!refKey.isEmpty() && symbolToInstrumentKeyMap.containsKey(refKey)) {
+                String matchedKey = symbolToInstrumentKeyMap.get(refKey);
+                if (cacheKey != null) instrumentKeyCache.put(cacheKey, matchedKey);
                 return matchedKey;
             }
-        }
 
-        String searchStr = (token + " " + (scrip != null ? (scrip.getTradingSymbol() + " " + scrip.getScripRefKey() + " " + scrip.getInstrumentName()) : "")).toUpperCase();
-        boolean isOptionOrFuture = searchStr.contains("CE") || searchStr.contains("PE") || searchStr.contains("FUT")
-                || (scrip != null && (scrip.getSegment() != null && scrip.getSegment().toUpperCase().contains("FO")));
-
-        // 2. Only match Index keys if NOT an Option or Future contract
-        if (!isOptionOrFuture) {
-            if (searchStr.contains("NIFTY 50") || searchStr.contains("NIFTY50") || searchStr.equals("NIFTY")) {
-                instrumentKeyCache.put(token, "NSE_INDEX|Nifty 50");
-                return "NSE_INDEX|Nifty 50";
-            }
-            if (searchStr.contains("BANK NIFTY") || searchStr.contains("BANKNIFTY") || searchStr.contains("NIFTY BANK")) {
-                instrumentKeyCache.put(token, "NSE_INDEX|Nifty Bank");
-                return "NSE_INDEX|Nifty Bank";
-            }
-            if (searchStr.contains("FINNIFTY") || searchStr.contains("NIFTY FIN")) {
-                instrumentKeyCache.put(token, "NSE_INDEX|Nifty Fin Service");
-                return "NSE_INDEX|Nifty Fin Service";
-            }
-            if (searchStr.contains("MIDCPNIFTY") || searchStr.contains("NIFTY MID")) {
-                instrumentKeyCache.put(token, "NSE_INDEX|NIFTY MID SELECT");
-                return "NSE_INDEX|NIFTY MID SELECT";
-            }
-            if (searchStr.contains("SENSEX") || searchStr.contains("BSX")) {
-                instrumentKeyCache.put(token, "BSE_INDEX|SENSEX");
-                return "BSE_INDEX|SENSEX";
-            }
-            if (searchStr.contains("BANKEX")) {
-                instrumentKeyCache.put(token, "BSE_INDEX|BANKEX");
-                return "BSE_INDEX|BANKEX";
+            // Index matching (only if NOT an option!)
+            if (!isOption) {
+                if (tradingSym.contains("NIFTY 50") || refKey.contains("NIFTY 50") || tradingSym.equals("NIFTY")) {
+                    return "NSE_INDEX|Nifty 50";
+                }
+                if (tradingSym.contains("BANKNIFTY") || refKey.contains("BANKNIFTY") || tradingSym.contains("NIFTY BANK")) {
+                    return "NSE_INDEX|Nifty Bank";
+                }
+                if (tradingSym.contains("SENSEX") || refKey.contains("SENSEX")) {
+                    return "BSE_INDEX|SENSEX";
+                }
             }
         }
 
         if (scrip == null) {
-            if (token.contains("|")) {
+            if (token != null && token.contains("|")) {
                 return token;
             }
-            if (token.matches("\\d+")) {
+            if (token != null && token.matches("\\d+")) {
                 return "NSE_FO|" + token;
             }
-            String clean = token.replaceAll("-(EQ|BE|BZ|SM)$", "");
+            String clean = token != null ? token.replaceAll("-(EQ|BE|BZ|SM)$", "") : "";
             return "NSE_EQ|" + clean;
         }
 
@@ -390,9 +405,9 @@ public class UpstoxService {
         String segment = scrip.getSegment() != null ? scrip.getSegment().toUpperCase() : "";
 
         String instKey = null;
-        if ("BFO".equalsIgnoreCase(exchange) || (("BSE".equalsIgnoreCase(exchange)) && (segment.contains("FO") || segment.contains("DERIVATIVE") || isOptionOrFuture))) {
+        if ("BFO".equalsIgnoreCase(exchange) || ("BSE".equalsIgnoreCase(exchange) && (segment.contains("FO") || segment.contains("DERIVATIVE")))) {
             instKey = "BSE_FO|" + symbol;
-        } else if ("NFO".equalsIgnoreCase(exchange) || segment.contains("FO") || segment.contains("DERIVATIVE") || isOptionOrFuture) {
+        } else if ("NFO".equalsIgnoreCase(exchange) || segment.contains("FO") || segment.contains("DERIVATIVE")) {
             instKey = "NSE_FO|" + symbol;
         } else if ("BSE".equalsIgnoreCase(exchange)) {
             String cleanSym = symbol.replaceAll("-(EQ|BE|BZ|SM)$", "");
@@ -402,8 +417,43 @@ public class UpstoxService {
             instKey = "NSE_EQ|" + cleanSym;
         }
 
-        instrumentKeyCache.put(token, instKey);
+        if (cacheKey != null) instrumentKeyCache.put(cacheKey, instKey);
         return instKey;
+    }
+
+    private String extractUnderlyingName(String tradingSym, String refKey, String instName) {
+        String str = (tradingSym + " " + refKey + " " + instName).toUpperCase();
+        if (str.contains("BANKNIFTY") || str.contains("NIFTY BANK")) return "BANKNIFTY";
+        if (str.contains("FINNIFTY") || str.contains("NIFTY FIN")) return "FINNIFTY";
+        if (str.contains("MIDCPNIFTY") || str.contains("NIFTY MID")) return "MIDCPNIFTY";
+        if (str.contains("NIFTYNXT50") || str.contains("NIFTY NEXT 50")) return "NIFTYNXT50";
+        if (str.contains("NIFTY")) return "NIFTY";
+        if (str.contains("SENSEX")) return "SENSEX";
+        if (str.contains("BANKEX")) return "BANKEX";
+
+        String first = tradingSym.split("[0-9]")[0];
+        return first.isEmpty() ? null : first;
+    }
+
+    private Double extractStrikePrice(Scrip scrip) {
+        if (scrip == null) return null;
+        if (scrip.getStrikePrice() != null && scrip.getStrikePrice() > 0) {
+            return scrip.getStrikePrice();
+        }
+        String refKey = scrip.getScripRefKey();
+        if (refKey == null || refKey.trim().isEmpty()) {
+            refKey = scrip.getTradingSymbol();
+        }
+        if (refKey != null) {
+            Pattern pattern = Pattern.compile("(\\d+(?:\\.\\d+)?)(?:CE|PE)$", Pattern.CASE_INSENSITIVE);
+            Matcher matcher = pattern.matcher(refKey.trim());
+            if (matcher.find()) {
+                try {
+                    return Double.parseDouble(matcher.group(1));
+                } catch (Exception ignored) {}
+            }
+        }
+        return null;
     }
 
     public List<Map<String, Object>> fetchHistoricalCandles(String instrumentKey, String timeframe) {

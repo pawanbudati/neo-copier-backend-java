@@ -9,38 +9,38 @@ import java.util.Map;
 public class UpstoxServiceTest {
 
     @Test
-    public void testUpstoxCandles() throws Exception {
+    public void testScripRefKeyStrikeExtraction() throws Exception {
         UpstoxService upstoxService = new UpstoxService();
         upstoxService.init();
 
-        System.out.println("[TEST] Waiting for complete.csv.gz indexing...");
+        System.out.println("[TEST] Waiting 6 seconds for complete.csv.gz indexing...");
         Thread.sleep(6000);
 
-        // Test 1: SENSEX 77000 PE Option
-        Scrip sensexOpt = new Scrip("12345", "SENSEX26JUL77000PE", "SENSEX26JUL77000PE", "SENSEX", "BFO", "PE", 77000.0, null, 10);
-        String sensexKey = upstoxService.resolveInstrumentKey("12345", sensexOpt);
-        System.out.println("[TEST 1 - SENSEX OPTION] Key=" + sensexKey);
+        // Test 1: BankNifty Option with strikePrice = 0.0, refKey = BANKNIFTY25AUG2639700.00PE
+        Scrip s1 = new Scrip("35177", "BANKNIFTY26AUG39700PE", "BANKNIFTY25AUG2639700.00PE", "OPTIDX", "NFO", "PE", 0.0, null, 30);
+        String key1 = upstoxService.resolveInstrumentKey("35177", s1);
+        System.out.println("[TEST 1 - BANKNIFTY 39700 PE] Key = " + key1);
 
-        // Test 2: SENSEX Index
-        Scrip sensexIndex = new Scrip("1", "SENSEX", "SENSEX", "SENSEX", "BSE", "INDEX", 0.0, null, 1);
-        String sensexIndexKey = upstoxService.resolveInstrumentKey("1", sensexIndex);
-        System.out.println("[TEST 2 - SENSEX INDEX] Key=" + sensexIndexKey);
+        // Test 2: Nifty Option with strikePrice = 0.0, refKey = NIFTY18AUG2628750.00CE
+        Scrip s2 = new Scrip("45347", "NIFTY2681828750CE", "NIFTY18AUG2628750.00CE", "OPTIDX", "NFO", "CE", 0.0, null, 65);
+        String key2 = upstoxService.resolveInstrumentKey("45347", s2);
+        System.out.println("[TEST 2 - NIFTY 28750 CE] Key = " + key2);
 
-        // Test 3: Nifty 24000 CE Option
-        Scrip niftyOpt = new Scrip("50978", "NIFTY26DEC27000CE", "NIFTY26DEC27000CE", "NIFTY", "NFO", "CE", 27000.0, null, 65);
-        String niftyOptKey = upstoxService.resolveInstrumentKey("50978", niftyOpt);
-        System.out.println("[TEST 3 - NIFTY OPTION] Key=" + niftyOptKey);
+        // Test 3: Sensex Option with strikePrice = 0.0, refKey = SENSEX26JUL2477000.00PE
+        Scrip s3 = new Scrip("99999", "SENSEX26JUL77000PE", "SENSEX26JUL2477000.00PE", "OPTIDX", "BFO", "PE", 0.0, null, 10);
+        String key3 = upstoxService.resolveInstrumentKey("99999", s3);
+        System.out.println("[TEST 3 - SENSEX 77000 PE] Key = " + key3);
 
-        // Test 4: Nifty Index
-        Scrip niftyIndex = new Scrip("2", "NIFTY 50", "NIFTY 50", "NIFTY 50", "NSE", "INDEX", 0.0, null, 1);
-        String niftyIndexKey = upstoxService.resolveInstrumentKey("2", niftyIndex);
-        System.out.println("[TEST 4 - NIFTY INDEX] Key=" + niftyIndexKey);
+        // Test 4: Sensex Index
+        Scrip s4 = new Scrip("1", "SENSEX", "SENSEX", "INDEX", "BSE", "INDEX", 0.0, null, 1);
+        String key4 = upstoxService.resolveInstrumentKey("1", s4);
+        System.out.println("[TEST 4 - SENSEX INDEX] Key = " + key4);
 
-        // Fetch candles for Nifty Option
-        List<Map<String, Object>> candles = upstoxService.fetchHistoricalCandles(niftyOptKey, "1m");
-        System.out.println("[TEST 3] Option Candles returned count: " + candles.size());
+        // Fetch candles for Nifty option
+        List<Map<String, Object>> candles = upstoxService.fetchHistoricalCandles(key2, "1m");
+        System.out.println("[TEST 2] Historical Candles count: " + candles.size());
         if (!candles.isEmpty()) {
-            System.out.println("[TEST 3] Sample option candle: " + candles.get(0));
+            System.out.println("[TEST 2] Sample option candle: " + candles.get(0));
         }
     }
 }
