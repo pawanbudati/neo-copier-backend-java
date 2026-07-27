@@ -456,12 +456,22 @@ public class UpstoxService {
         return null;
     }
 
+    private final Map<String, CandleCacheEntry> candleCache = new ConcurrentHashMap<>();
+    private record CandleCacheEntry(long timestamp, List<Map<String, Object>> candles) {}
+
     public List<Map<String, Object>> fetchHistoricalCandles(String instrumentKey, String timeframe) {
         if (instrumentKey == null || instrumentKey.trim().isEmpty()) {
             return Collections.emptyList();
         }
 
-        String interval = switch (timeframe != null ? timeframe : "1m") {
+        String tf = timeframe != null ? timeframe : "1m";
+        String cacheKey = instrumentKey + "|" + tf;
+        CandleCacheEntry cached = candleCache.get(cacheKey);
+        if (cached != null && (System.currentTimeMillis() - cached.timestamp()) < 10000) {
+            return cached.candles();
+        }
+
+        String interval = switch (tf) {
             case "30m", "1h" -> "1minute";
             case "day", "1d" -> "day";
             default -> "1minute";
@@ -483,12 +493,14 @@ public class UpstoxService {
         // Try 1: toDate/fromDate
         List<Map<String, Object>> bars = executeHistoricalCandleRequest(urlWithDates, instrumentKey);
         if (!bars.isEmpty()) {
+            candleCache.put(cacheKey, new CandleCacheEntry(System.currentTimeMillis(), bars));
             return bars;
         }
 
         // Try 2: toDate only fallback
         bars = executeHistoricalCandleRequest(urlToDateOnly, instrumentKey);
         if (!bars.isEmpty()) {
+            candleCache.put(cacheKey, new CandleCacheEntry(System.currentTimeMillis(), bars));
             return bars;
         }
 
@@ -497,6 +509,9 @@ public class UpstoxService {
             String altUrl = String.format("https://api.upstox.com/v2/historical-candle/%s/%s/%s",
                     encodeUriPathParam("NSE_INDEX|Nifty50"), interval, toDateStr);
             bars = executeHistoricalCandleRequest(altUrl, "NSE_INDEX|Nifty50");
+            if (!bars.isEmpty()) {
+                candleCache.put(cacheKey, new CandleCacheEntry(System.currentTimeMillis(), bars));
+            }
         }
 
         return bars;
@@ -551,6 +566,12 @@ public class UpstoxService {
 
             log.info("[UpstoxService] Requesting Upstox historical candles: URL={}, Token Present={}", url, hasValidToken());
             HttpResponse<String> resp = httpClient.send(reqBuilder.GET().build(), HttpResponse.BodyHandlers.ofString());
+
+            if (resp.statusCode() == 429) {
+                log.warn("[UpstoxService] Rate limit 429 hit for {}. Sleeping 600ms before retry...", instrumentKey);
+                Thread.sleep(600);
+                resp = httpClient.send(reqBuilder.GET().build(), HttpResponse.BodyHandlers.ofString());
+            }
 
             if (resp.statusCode() == 200) {
                 JsonNode root = objectMapper.readTree(resp.body());
