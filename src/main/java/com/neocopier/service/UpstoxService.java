@@ -9,20 +9,25 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedReader;
 import java.io.File;
-import java.nio.file.Files;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
 import java.net.URI;
+import java.net.URL;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.zip.GZIPInputStream;
 
 @Service
 public class UpstoxService {
@@ -45,6 +50,8 @@ public class UpstoxService {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final Map<String, String> instrumentKeyCache = new ConcurrentHashMap<>();
+    private final Map<String, String> symbolToInstrumentKeyMap = new ConcurrentHashMap<>();
+    private volatile boolean instrumentsIndexed = false;
 
     public UpstoxService() {
         this.httpClient = HttpClient.newBuilder()
@@ -60,7 +67,49 @@ public class UpstoxService {
         if (initialAccessToken != null && !initialAccessToken.trim().isEmpty() && (accessToken == null || accessToken.isEmpty())) {
             this.accessToken = initialAccessToken.trim();
         }
+        downloadAndIndexUpstoxInstrumentsAsync();
         log.info("[UpstoxService] Initialized. Configured: {}, Has Token: {}", isConfigured(), hasValidToken());
+    }
+
+    public void downloadAndIndexUpstoxInstrumentsAsync() {
+        if (instrumentsIndexed) return;
+        new Thread(() -> {
+            log.info("[UpstoxService] Downloading Upstox Instrument Master CSV in background...");
+            try {
+                URL url = URI.create("https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz").toURL();
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(30000);
+
+                try (GZIPInputStream gzip = new GZIPInputStream(conn.getInputStream());
+                     BufferedReader reader = new BufferedReader(new InputStreamReader(gzip, StandardCharsets.UTF_8))) {
+
+                    String line;
+                    boolean isHeader = true;
+                    int count = 0;
+                    while ((line = reader.readLine()) != null) {
+                        if (isHeader) {
+                            isHeader = false;
+                            continue;
+                        }
+                        String[] cols = line.split(",");
+                        if (cols.length >= 2) {
+                            String instKey = cols[0].replace("\"", "").trim();
+                            String tradingSym = cols[1].replace("\"", "").trim().toUpperCase();
+                            if (!tradingSym.isEmpty() && !instKey.isEmpty()) {
+                                symbolToInstrumentKeyMap.put(tradingSym, instKey);
+                                count++;
+                            }
+                        }
+                    }
+                    instrumentsIndexed = true;
+                    log.info("[UpstoxService] Successfully indexed {} Upstox instruments into memory!", count);
+                }
+            } catch (Exception e) {
+                log.warn("[UpstoxService] Could not index Upstox instruments: {}", e.getMessage());
+            }
+        }, "upstox-indexer-thread").start();
     }
 
     private void loadDotEnvProperties() {
@@ -275,6 +324,32 @@ public class UpstoxService {
         if (searchStr.contains("BANKEX")) {
             instrumentKeyCache.put(token, "BSE_INDEX|BANKEX");
             return "BSE_INDEX|BANKEX";
+        }
+
+        String symbolToLookup = scrip != null ? scrip.getTradingSymbol() : token;
+        if (symbolToLookup == null || symbolToLookup.trim().isEmpty()) {
+            symbolToLookup = scrip != null ? scrip.getScripRefKey() : token;
+        }
+
+        if (symbolToLookup != null) {
+            String symUpper = symbolToLookup.trim().toUpperCase();
+
+            // 1. Check exact match in Upstox Instrument Master map
+            if (symbolToInstrumentKeyMap.containsKey(symUpper)) {
+                String matchedKey = symbolToInstrumentKeyMap.get(symUpper);
+                log.info("[UpstoxService] Matched instrument key in Upstox Master Index: {} -> {}", symUpper, matchedKey);
+                instrumentKeyCache.put(token, matchedKey);
+                return matchedKey;
+            }
+
+            // 2. Check clean symbol without -EQ, -BE
+            String cleanSym = symUpper.replaceAll("-(EQ|BE|BZ|SM)$", "");
+            if (symbolToInstrumentKeyMap.containsKey(cleanSym)) {
+                String matchedKey = symbolToInstrumentKeyMap.get(cleanSym);
+                log.info("[UpstoxService] Matched clean instrument key in Upstox Master Index: {} -> {}", cleanSym, matchedKey);
+                instrumentKeyCache.put(token, matchedKey);
+                return matchedKey;
+            }
         }
 
         if (scrip == null) {
