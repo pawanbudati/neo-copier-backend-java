@@ -15,7 +15,7 @@ public class SystemController {
         this.feedService = feedService;
     }
 
-    @GetMapping("/")
+    @GetMapping({"/", "/api/system/status"})
     public Map<String, String> root() {
         return Map.of("status", "running", "name", "neo-copier-java-backend");
     }
