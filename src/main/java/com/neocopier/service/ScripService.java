@@ -49,13 +49,16 @@ public class ScripService {
     private final Map<String, List<Map<String, Object>>> ohlcHistory = new ConcurrentHashMap<>();
 
     private final KotakFeedWebSocketClient webSocketClient;
+    private final UpstoxService upstoxService;
 
     public ScripService(ScripRepository scripRepository,
                         KotakApiClient kotakApiClient,
-                        @org.springframework.context.annotation.Lazy KotakFeedWebSocketClient webSocketClient) {
+                        @org.springframework.context.annotation.Lazy KotakFeedWebSocketClient webSocketClient,
+                        UpstoxService upstoxService) {
         this.scripRepository = scripRepository;
         this.kotakApiClient = kotakApiClient;
         this.webSocketClient = webSocketClient;
+        this.upstoxService = upstoxService;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15))
                 .followRedirects(HttpClient.Redirect.NORMAL)
@@ -206,6 +209,24 @@ public class ScripService {
     public List<Map<String, Object>> getOhlcHistory(String token, String timeframe) {
         if (token == null || token.trim().isEmpty()) {
             return Collections.emptyList();
+        }
+
+        Scrip scrip = scripRepository.findByScriptToken(token).orElse(null);
+        String instKey = upstoxService.resolveInstrumentKey(token, scrip);
+
+        List<Map<String, Object>> upstoxCandles = upstoxService.fetchHistoricalCandles(instKey, timeframe);
+        if (!upstoxCandles.isEmpty()) {
+            // Append any live ticks recorded during active session
+            List<Map<String, Object>> sessionTicks = ohlcHistory.get(token);
+            if (sessionTicks != null && !sessionTicks.isEmpty()) {
+                Map<String, Object> lastLiveBar = sessionTicks.get(sessionTicks.size() - 1);
+                long lastLiveTime = (long) lastLiveBar.get("time");
+                long lastUpstoxTime = (long) upstoxCandles.get(upstoxCandles.size() - 1).get("time");
+                if (lastLiveTime > lastUpstoxTime) {
+                    upstoxCandles.add(lastLiveBar);
+                }
+            }
+            return upstoxCandles;
         }
 
         List<Map<String, Object>> history = ohlcHistory.get(token);
