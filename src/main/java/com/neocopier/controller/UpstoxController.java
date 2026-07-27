@@ -18,11 +18,23 @@ public class UpstoxController {
 
     @GetMapping("/status")
     public ResponseEntity<Map<String, Object>> getStatus() {
-        return ResponseEntity.ok(Map.of(
-                "hasToken", upstoxService.hasValidToken(),
-                "isConfigured", upstoxService.isConfigured(),
-                "authUrl", upstoxService.getAuthUrl()
-        ));
+        return ResponseEntity.ok(upstoxService.getConfigMap());
+    }
+
+    @GetMapping("/config")
+    public ResponseEntity<Map<String, Object>> getConfig() {
+        return ResponseEntity.ok(upstoxService.getConfigMap());
+    }
+
+    @PostMapping("/config")
+    public ResponseEntity<Map<String, Object>> saveConfig(@RequestBody Map<String, String> body) {
+        String apiKey = body.get("apiKey");
+        String apiSecret = body.get("apiSecret");
+        String redirectUri = body.get("redirectUri");
+        String accessToken = body.get("accessToken");
+
+        Map<String, Object> updated = upstoxService.saveConfig(apiKey, apiSecret, redirectUri, accessToken);
+        return ResponseEntity.ok(updated);
     }
 
     @GetMapping("/auth-url")

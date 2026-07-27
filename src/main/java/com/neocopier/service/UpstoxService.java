@@ -126,6 +126,10 @@ public class UpstoxService {
         return apiKey;
     }
 
+    public String getApiSecret() {
+        return apiSecret;
+    }
+
     public String getRedirectUri() {
         return redirectUri;
     }
@@ -133,7 +137,63 @@ public class UpstoxService {
     public void setAccessToken(String token) {
         if (token != null) {
             this.accessToken = token.trim();
+            updateDotEnvFile();
             log.info("[UpstoxService] Upstox Access Token updated successfully.");
+        }
+    }
+
+    public synchronized Map<String, Object> saveConfig(String newApiKey, String newApiSecret, String newRedirectUri, String newAccessToken) {
+        if (newApiKey != null) this.apiKey = newApiKey.trim();
+        if (newApiSecret != null) this.apiSecret = newApiSecret.trim();
+        if (newRedirectUri != null && !newRedirectUri.trim().isEmpty()) this.redirectUri = newRedirectUri.trim();
+        if (newAccessToken != null) this.accessToken = newAccessToken.trim();
+
+        updateDotEnvFile();
+        log.info("[UpstoxService] Config updated via UI. Configured: {}, Has Token: {}", isConfigured(), hasValidToken());
+        return getConfigMap();
+    }
+
+    public Map<String, Object> getConfigMap() {
+        Map<String, Object> map = new HashMap<>();
+        map.put("apiKey", apiKey != null ? apiKey : "");
+        map.put("apiSecret", apiSecret != null ? apiSecret : "");
+        map.put("redirectUri", redirectUri != null ? redirectUri : "");
+        map.put("accessToken", accessToken != null ? accessToken : "");
+        map.put("isConfigured", isConfigured());
+        map.put("hasToken", hasValidToken());
+        map.put("authUrl", getAuthUrl());
+        return map;
+    }
+
+    private synchronized void updateDotEnvFile() {
+        File envFile = new File(".env");
+        try {
+            List<String> lines = envFile.exists() ? Files.readAllLines(envFile.toPath()) : new ArrayList<>();
+            Map<String, String> currentVars = new LinkedHashMap<>();
+
+            for (String line : lines) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty() || trimmed.startsWith("#")) continue;
+                int eq = trimmed.indexOf('=');
+                if (eq > 0) {
+                    currentVars.put(trimmed.substring(0, eq).trim(), trimmed.substring(eq + 1).trim());
+                }
+            }
+
+            if (apiKey != null && !apiKey.isEmpty()) currentVars.put("UPSTOX_API_KEY", apiKey);
+            if (apiSecret != null && !apiSecret.isEmpty()) currentVars.put("UPSTOX_API_SECRET", apiSecret);
+            if (redirectUri != null && !redirectUri.isEmpty()) currentVars.put("UPSTOX_REDIRECT_URI", redirectUri);
+            if (accessToken != null && !accessToken.isEmpty()) currentVars.put("UPSTOX_ACCESS_TOKEN", accessToken);
+
+            List<String> newLines = new ArrayList<>();
+            for (Map.Entry<String, String> entry : currentVars.entrySet()) {
+                newLines.add(entry.getKey() + "=" + entry.getValue());
+            }
+
+            Files.write(envFile.toPath(), newLines, StandardCharsets.UTF_8);
+            log.info("[UpstoxService] .env file saved successfully.");
+        } catch (Exception e) {
+            log.error("[UpstoxService] Failed to write .env file: {}", e.getMessage());
         }
     }
 
