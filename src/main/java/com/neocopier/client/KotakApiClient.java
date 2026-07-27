@@ -20,7 +20,7 @@ public class KotakApiClient {
     private static final Logger log = LoggerFactory.getLogger(KotakApiClient.class);
 
     @Value("${kotak.api.base:https://mis.kotaksecurities.com}")
-    private String defaultBaseUrl;
+    private String defaultBaseUrl = "https://mis.kotaksecurities.com";
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -200,19 +200,70 @@ public class KotakApiClient {
     }
 
     public Map<String, Object> placeOrder(Account account, Map<String, Object> payload) {
+        List<String> paths = List.of(
+                "/quick/order/rule/ms/place",
+                "/Orders/2.0/quick/order/rule/ms/place",
+                "/quick/order/place",
+                "/orders/v1/place"
+        );
+        for (String base : getCandidateBaseUrls(account)) {
+            for (String path : paths) {
+                try {
+                    Map<String, Object> res = postRequest(base + path, payload, account);
+                    if (isValidResponse(res)) {
+                        log.info("[KotakApiClient] placeOrder SUCCESS via {}{}", base, path);
+                        return res;
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
         String baseUrl = getBaseUrl(account);
-        return postRequest(baseUrl + "/orders/v1/place", payload, account);
+        return postRequest(baseUrl + "/quick/order/rule/ms/place", payload, account);
     }
 
     public Map<String, Object> modifyOrder(Account account, Map<String, Object> payload) {
+        List<String> paths = List.of(
+                "/quick/order/rule/ms/modify",
+                "/Orders/2.0/quick/order/rule/ms/modify",
+                "/quick/order/modify",
+                "/orders/v1/modify"
+        );
+        for (String base : getCandidateBaseUrls(account)) {
+            for (String path : paths) {
+                try {
+                    Map<String, Object> res = postRequest(base + path, payload, account);
+                    if (isValidResponse(res)) {
+                        log.info("[KotakApiClient] modifyOrder SUCCESS via {}{}", base, path);
+                        return res;
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
         String baseUrl = getBaseUrl(account);
-        return postRequest(baseUrl + "/orders/v1/modify", payload, account);
+        return postRequest(baseUrl + "/quick/order/rule/ms/modify", payload, account);
     }
 
     public Map<String, Object> cancelOrder(Account account, String orderId) {
+        List<String> paths = List.of(
+                "/quick/order/rule/ms/cancel",
+                "/Orders/2.0/quick/order/rule/ms/cancel",
+                "/quick/order/cancel",
+                "/orders/v1/cancel"
+        );
+        Map<String, Object> payload = Map.of("order_id", orderId, "on", orderId, "no", orderId);
+        for (String base : getCandidateBaseUrls(account)) {
+            for (String path : paths) {
+                try {
+                    Map<String, Object> res = postRequest(base + path, payload, account);
+                    if (isValidResponse(res)) {
+                        log.info("[KotakApiClient] cancelOrder SUCCESS via {}{}", base, path);
+                        return res;
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
         String baseUrl = getBaseUrl(account);
-        Map<String, Object> payload = Map.of("order_id", orderId);
-        return postRequest(baseUrl + "/orders/v1/cancel", payload, account);
+        return postRequest(baseUrl + "/quick/order/rule/ms/cancel", payload, account);
     }
 
     public Map<String, Object> marginRequired(Account account, Map<String, Object> payload) {
@@ -263,7 +314,15 @@ public class KotakApiClient {
     }
 
     private boolean isValidResponse(Map<String, Object> res) {
-        return res != null && !res.isEmpty() && !res.containsKey("error") && !res.containsKey("raw");
+        if (res == null || res.isEmpty() || res.containsKey("error")) return false;
+        String raw = (String) res.get("raw");
+        if (raw != null && (raw.contains("404") || raw.contains("Not Found") || raw.contains("Cannot POST") || raw.contains("Cannot GET"))) return false;
+        String stat = (String) res.get("stat");
+        if ("NotOk".equalsIgnoreCase(stat)) {
+            String errMsg = (String) res.get("errMsg");
+            if (errMsg != null && (errMsg.contains("404") || errMsg.contains("Invalid URL") || errMsg.contains("Not Found"))) return false;
+        }
+        return true;
     }
 
     private String getBaseUrl(Account account) {

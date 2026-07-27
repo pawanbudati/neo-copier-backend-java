@@ -74,20 +74,44 @@ public class TradingService {
             String orderTypeStr = (String) orderInput.get("orderType");
             String kotakOrderType = "MARKET".equalsIgnoreCase(orderTypeStr) ? "MKT" : "SL".equalsIgnoreCase(orderTypeStr) ? "SL" : "L";
 
+            String neoExchange = ScripParser.mapToNeoExchange(exchange);
+            String triggerPrice = "SL".equalsIgnoreCase(orderTypeStr) ? String.valueOf(orderInput.getOrDefault("triggerPrice", 0)) : "0";
+            String qtyStr = String.valueOf(orderInput.get("quantity"));
+            String priceStr = String.valueOf(orderInput.getOrDefault("price", 0));
+
             Map<String, Object> payload = new HashMap<>();
-            payload.put("exchange_segment", ScripParser.mapToNeoExchange(exchange));
+            // Full key names
+            payload.put("exchange_segment", neoExchange);
             payload.put("trading_symbol", tradingSymbol);
-            payload.put("quantity", String.valueOf(orderInput.get("quantity")));
-            payload.put("price", String.valueOf(orderInput.getOrDefault("price", 0)));
+            payload.put("quantity", qtyStr);
+            payload.put("price", priceStr);
             payload.put("transaction_type", transactionType);
             payload.put("order_type", kotakOrderType);
             payload.put("product", "MIS");
             payload.put("validity", "DAY");
             payload.put("disclosed_quantity", "0");
             payload.put("market_protection", "0");
-            payload.put("trigger_price", "SL".equalsIgnoreCase(orderTypeStr) ? String.valueOf(orderInput.getOrDefault("triggerPrice", 0)) : "0");
+            payload.put("trigger_price", triggerPrice);
             payload.put("pf", "N");
             payload.put("amo", "NO");
+
+            // Short key names (Kotak Neo SDK)
+            payload.put("es", neoExchange);
+            payload.put("ts", tradingSymbol);
+            payload.put("qt", qtyStr);
+            payload.put("pr", priceStr);
+            payload.put("tt", transactionType);
+            payload.put("pt", kotakOrderType);
+            payload.put("pc", "MIS");
+            payload.put("rt", "DAY");
+            payload.put("dq", "0");
+            payload.put("mp", "0");
+            payload.put("tp", triggerPrice);
+            payload.put("am", "NO");
+            if (matchedScrip != null && matchedScrip.getScriptToken() != null) {
+                payload.put("tok", matchedScrip.getScriptToken());
+                payload.put("token", matchedScrip.getScriptToken());
+            }
 
             log.info("[Order] Placing {} order for {} on {} via Kotak API", orderInput.get("transactionType"), tradingSymbol, account.getNickname());
             Map<String, Object> response = kotakApiClient.placeOrder(account, payload);
