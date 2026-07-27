@@ -65,6 +65,11 @@ public class UpstoxController {
         ));
     }
 
+    @GetMapping("/test-candle")
+    public ResponseEntity<Map<String, Object>> testCandle(@RequestParam(value = "key", defaultValue = "NSE_INDEX|Nifty 50") String key) {
+        return ResponseEntity.ok(upstoxService.testHistoricalCandles(key));
+    }
+
     @GetMapping("/callback")
     public ResponseEntity<String> handleCallback(@RequestParam(value = "code", required = false) String code,
                                                  @RequestParam(value = "error", required = false) String error) {

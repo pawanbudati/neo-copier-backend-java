@@ -246,37 +246,64 @@ public class UpstoxService {
     public String resolveInstrumentKey(String token, Scrip scrip) {
         if (token == null) return null;
 
-        // Check index mappings
-        String tokenUpper = token.toUpperCase();
-        if (tokenUpper.contains("NIFTY 50") || tokenUpper.equals("NIFTY")) {
-            return "NSE_INDEX|Nifty 50";
-        }
-        if (tokenUpper.contains("BANK NIFTY") || tokenUpper.contains("BANKNIFTY")) {
-            return "NSE_INDEX|Nifty Bank";
-        }
-        if (tokenUpper.contains("SENSEX") || tokenUpper.contains("BSX")) {
-            return "BSE_INDEX|SENSEX";
-        }
-
-        if (scrip == null) {
-            return instrumentKeyCache.get(token);
-        }
-
         if (instrumentKeyCache.containsKey(token)) {
             return instrumentKeyCache.get(token);
         }
 
-        // Standard Instrument Key format logic
+        String searchStr = (token + " " + (scrip != null ? (scrip.getTradingSymbol() + " " + scrip.getScripRefKey() + " " + scrip.getInstrumentName()) : "")).toUpperCase();
+
+        if (searchStr.contains("NIFTY 50") || searchStr.contains("NIFTY50") || searchStr.contains("INDEX NIFTY") || searchStr.equals("NIFTY")) {
+            instrumentKeyCache.put(token, "NSE_INDEX|Nifty 50");
+            return "NSE_INDEX|Nifty 50";
+        }
+        if (searchStr.contains("BANK NIFTY") || searchStr.contains("BANKNIFTY") || searchStr.contains("NIFTY BANK")) {
+            instrumentKeyCache.put(token, "NSE_INDEX|Nifty Bank");
+            return "NSE_INDEX|Nifty Bank";
+        }
+        if (searchStr.contains("FINNIFTY") || searchStr.contains("NIFTY FIN")) {
+            instrumentKeyCache.put(token, "NSE_INDEX|Nifty Fin Service");
+            return "NSE_INDEX|Nifty Fin Service";
+        }
+        if (searchStr.contains("MIDCPNIFTY") || searchStr.contains("NIFTY MID")) {
+            instrumentKeyCache.put(token, "NSE_INDEX|NIFTY MID SELECT");
+            return "NSE_INDEX|NIFTY MID SELECT";
+        }
+        if (searchStr.contains("SENSEX") || searchStr.contains("BSX")) {
+            instrumentKeyCache.put(token, "BSE_INDEX|SENSEX");
+            return "BSE_INDEX|SENSEX";
+        }
+        if (searchStr.contains("BANKEX")) {
+            instrumentKeyCache.put(token, "BSE_INDEX|BANKEX");
+            return "BSE_INDEX|BANKEX";
+        }
+
+        if (scrip == null) {
+            return null;
+        }
+
         String symbol = scrip.getTradingSymbol();
+        if (symbol == null || symbol.trim().isEmpty()) {
+            symbol = scrip.getScripRefKey();
+        }
+        if (symbol == null || symbol.trim().isEmpty()) {
+            symbol = scrip.getInstrumentName();
+        }
+
+        if (symbol == null) return null;
+        symbol = symbol.trim();
+
         String exchange = scrip.getExchange() != null ? scrip.getExchange().toUpperCase() : "NSE";
+        String segment = scrip.getSegment() != null ? scrip.getSegment().toUpperCase() : "";
 
         String instKey = null;
-        if ("NFO".equalsIgnoreCase(exchange) || "BFO".equalsIgnoreCase(exchange) || "F&O".equalsIgnoreCase(scrip.getSegment())) {
+        if ("NFO".equalsIgnoreCase(exchange) || "BFO".equalsIgnoreCase(exchange) || segment.contains("FO") || segment.contains("DERIVATIVE")) {
             instKey = "NSE_FO|" + symbol;
         } else if ("BSE".equalsIgnoreCase(exchange)) {
-            instKey = "BSE_EQ|" + symbol;
+            String cleanSym = symbol.replaceAll("-(EQ|BE|BZ|SM)$", "");
+            instKey = "BSE_EQ|" + cleanSym;
         } else {
-            instKey = "NSE_EQ|" + symbol;
+            String cleanSym = symbol.replaceAll("-(EQ|BE|BZ|SM)$", "");
+            instKey = "NSE_EQ|" + cleanSym;
         }
 
         instrumentKeyCache.put(token, instKey);
@@ -302,8 +329,40 @@ public class UpstoxService {
         String fromDateStr = fromDate.format(fmt);
 
         String encodedKey = URLEncoder.encode(instrumentKey, StandardCharsets.UTF_8);
-        String url = String.format("https://api.upstox.com/v2/historical-candle/%s/%s/%s/%s",
+        String urlWithDates = String.format("https://api.upstox.com/v2/historical-candle/%s/%s/%s/%s",
                 encodedKey, interval, toDateStr, fromDateStr);
+        String urlToDateOnly = String.format("https://api.upstox.com/v2/historical-candle/%s/%s/%s",
+                encodedKey, interval, toDateStr);
+
+        // Try 1: toDate/fromDate
+        List<Map<String, Object>> bars = executeHistoricalCandleRequest(urlWithDates, instrumentKey);
+        if (!bars.isEmpty()) {
+            return bars;
+        }
+
+        // Try 2: toDate only fallback
+        bars = executeHistoricalCandleRequest(urlToDateOnly, instrumentKey);
+        if (!bars.isEmpty()) {
+            return bars;
+        }
+
+        // Try 3: If instrumentKey was NSE_INDEX|Nifty 50, try fallback key if needed
+        if (instrumentKey.contains("Nifty 50")) {
+            String altUrl = String.format("https://api.upstox.com/v2/historical-candle/%s/%s/%s",
+                    URLEncoder.encode("NSE_INDEX|Nifty50", StandardCharsets.UTF_8), interval, toDateStr);
+            bars = executeHistoricalCandleRequest(altUrl, "NSE_INDEX|Nifty50");
+        }
+
+        return bars;
+    }
+
+    public Map<String, Object> testHistoricalCandles(String key) {
+        String testKey = (key == null || key.trim().isEmpty()) ? "NSE_INDEX|Nifty 50" : key.trim();
+        String encodedKey = URLEncoder.encode(testKey, StandardCharsets.UTF_8);
+        String url = String.format("https://api.upstox.com/v2/historical-candle/%s/1minute/%s/%s",
+                encodedKey,
+                LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")),
+                LocalDate.now().minusDays(7).format(DateTimeFormatter.ofPattern("yyyy-MM-dd")));
 
         try {
             HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
@@ -315,6 +374,32 @@ public class UpstoxService {
             }
 
             HttpResponse<String> resp = httpClient.send(reqBuilder.GET().build(), HttpResponse.BodyHandlers.ofString());
+            return Map.of(
+                    "testKey", testKey,
+                    "url", url,
+                    "statusCode", resp.statusCode(),
+                    "hasToken", hasValidToken(),
+                    "tokenSnippet", hasValidToken() ? accessToken.substring(0, Math.min(10, accessToken.length())) + "..." : "none",
+                    "rawBody", resp.body()
+            );
+        } catch (Exception e) {
+            return Map.of("error", e.getMessage());
+        }
+    }
+
+    private List<Map<String, Object>> executeHistoricalCandleRequest(String url, String instrumentKey) {
+        try {
+            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Accept", "application/json");
+
+            if (hasValidToken()) {
+                reqBuilder.header("Authorization", "Bearer " + accessToken);
+            }
+
+            log.info("[UpstoxService] Requesting Upstox historical candles: URL={}, Token Present={}", url, hasValidToken());
+            HttpResponse<String> resp = httpClient.send(reqBuilder.GET().build(), HttpResponse.BodyHandlers.ofString());
+
             if (resp.statusCode() == 200) {
                 JsonNode root = objectMapper.readTree(resp.body());
                 if ("success".equalsIgnoreCase(root.path("status").asText()) && root.path("data").has("candles")) {
@@ -341,18 +426,18 @@ public class UpstoxService {
                         }
                     }
 
-                    // Upstox returns newest first; reverse so older candles are first
                     Collections.reverse(bars);
-                    log.info("[UpstoxService] Fetched {} historical candles for {}", bars.size(), instrumentKey);
+                    log.info("[UpstoxService] Successfully fetched {} historical candles for {}", bars.size(), instrumentKey);
                     return bars;
+                } else {
+                    log.warn("[UpstoxService] Upstox returned 200 but status/candles missing: {}", resp.body());
                 }
             } else {
-                log.warn("[UpstoxService] Historical candles request status {}: {}", resp.statusCode(), resp.body());
+                log.warn("[UpstoxService] Historical candles HTTP {} for {}: {}", resp.statusCode(), instrumentKey, resp.body());
             }
         } catch (Exception e) {
-            log.error("[UpstoxService] Exception fetching historical candles for {}: {}", instrumentKey, e.getMessage());
+            log.error("[UpstoxService] Exception executing candle request for {}: {}", instrumentKey, e.getMessage());
         }
-
         return Collections.emptyList();
     }
 
