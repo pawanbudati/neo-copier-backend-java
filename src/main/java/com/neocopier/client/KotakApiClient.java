@@ -302,15 +302,11 @@ public class KotakApiClient {
      */
     private List<String> getCandidateBaseUrls(Account account) {
         String accountBase = account.getBaseUrl();
-        List<String> bases = new ArrayList<>();
-        if (accountBase != null && !accountBase.isEmpty()) {
-            bases.add(accountBase.replaceAll("/+$", ""));
+        if (accountBase != null && !accountBase.trim().isEmpty()) {
+            return List.of(accountBase.trim().replaceAll("/+$", ""));
         }
         String defBase = defaultBaseUrl.replaceAll("/+$", "");
-        if (!bases.contains(defBase)) {
-            bases.add(defBase);
-        }
-        return bases;
+        return List.of(defBase);
     }
 
     private boolean isValidResponse(Map<String, Object> res) {
@@ -374,7 +370,11 @@ public class KotakApiClient {
             HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             String responseBody = response.body();
 
-            log.info("[KotakApiClient] [OUTBOUND RES] {} {} | Status: {} | Body: {}", method, url, response.statusCode(), responseBody);
+            if (response.statusCode() >= 400) {
+                log.debug("[KotakApiClient] [OUTBOUND RES] {} {} | Status: {} | Body: {}", method, url, response.statusCode(), responseBody);
+            } else {
+                log.info("[KotakApiClient] [OUTBOUND RES] {} {} | Status: {} | Body: {}", method, url, response.statusCode(), responseBody);
+            }
 
             if (responseBody == null || responseBody.trim().isEmpty()) {
                 Map<String, Object> resMap = new HashMap<>();
