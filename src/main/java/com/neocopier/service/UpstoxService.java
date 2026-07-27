@@ -278,7 +278,14 @@ public class UpstoxService {
         }
 
         if (scrip == null) {
-            return null;
+            if (token.contains("|")) {
+                return token;
+            }
+            if (token.matches("\\d+")) {
+                return "NSE_FO|" + token;
+            }
+            String clean = token.replaceAll("-(EQ|BE|BZ|SM)$", "");
+            return "NSE_EQ|" + clean;
         }
 
         String symbol = scrip.getTradingSymbol();

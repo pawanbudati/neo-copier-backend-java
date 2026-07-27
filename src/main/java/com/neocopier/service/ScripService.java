@@ -206,17 +206,22 @@ public class ScripService {
         }
     }
 
-    public List<Map<String, Object>> getOhlcHistory(String token, String timeframe) {
+    public List<Map<String, Object>> getOhlcHistory(String token, String symbolParam, String exchangeParam, String segmentParam, String timeframe) {
         if (token == null || token.trim().isEmpty()) {
             return Collections.emptyList();
         }
 
         Scrip scrip = scripRepository.findByScriptToken(token).orElse(null);
+        if (scrip == null && symbolParam != null && !symbolParam.trim().isEmpty()) {
+            scrip = new Scrip(token, symbolParam.trim(), symbolParam.trim(), symbolParam.trim(), exchangeParam, segmentParam, null, null, null);
+        }
+
         String instKey = upstoxService.resolveInstrumentKey(token, scrip);
+        log.info("[ScripService] getOhlcHistory: token={}, symbolParam={}, exchangeParam={}, resolvedInstKey={}",
+                token, symbolParam, exchangeParam, instKey);
 
         List<Map<String, Object>> upstoxCandles = upstoxService.fetchHistoricalCandles(instKey, timeframe);
         if (!upstoxCandles.isEmpty()) {
-            // Append any live ticks recorded during active session
             List<Map<String, Object>> sessionTicks = ohlcHistory.get(token);
             if (sessionTicks != null && !sessionTicks.isEmpty()) {
                 Map<String, Object> lastLiveBar = sessionTicks.get(sessionTicks.size() - 1);

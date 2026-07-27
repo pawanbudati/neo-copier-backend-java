@@ -37,8 +37,11 @@ public class ScripController {
 
     @GetMapping("/api/scrips/history")
     public List<Map<String, Object>> getScripHistory(@RequestParam(value = "token", defaultValue = "") String token,
+                                                     @RequestParam(value = "symbol", required = false) String symbol,
+                                                     @RequestParam(value = "exchange", required = false) String exchange,
+                                                     @RequestParam(value = "segment", required = false) String segment,
                                                      @RequestParam(value = "timeframe", defaultValue = "1m") String timeframe) {
-        return scripService.getOhlcHistory(token, timeframe);
+        return scripService.getOhlcHistory(token, symbol, exchange, segment, timeframe);
     }
 
     @GetMapping("/api/scrips/status")
