@@ -40,12 +40,18 @@ public class LoggingAspect {
         String queryString = (request != null && request.getQueryString() != null) ? "?" + request.getQueryString() : "";
         String clientIp = request != null ? getClientIp(request) : "127.0.0.1";
 
+        boolean isPollEndpoint = isPollingEndpoint(httpMethod, requestUri);
         String targetMethod = joinPoint.getSignature().getDeclaringType().getSimpleName() + "." + joinPoint.getSignature().getName();
         String argsString = formatArgs(joinPoint.getArgs());
 
-        // 1. Log HTTP Request
-        log.info("[AOP] [REQ] [{}] {} {}{} | IP: {} | Handler: {} | Args: {}",
-                reqTimestamp, httpMethod, requestUri, queryString, clientIp, targetMethod, argsString);
+        // 1. Log HTTP Request (only DEBUG if polling GET request)
+        if (!isPollEndpoint) {
+            log.info("[AOP] [REQ] [{}] {} {}{} | IP: {} | Handler: {}",
+                    reqTimestamp, httpMethod, requestUri, queryString, clientIp, targetMethod);
+        } else if (log.isDebugEnabled()) {
+            log.debug("[AOP] [REQ] [{}] {} {}{} | IP: {} | Handler: {}",
+                    reqTimestamp, httpMethod, requestUri, queryString, clientIp, targetMethod);
+        }
 
         Object result;
         try {
@@ -56,7 +62,7 @@ public class LoggingAspect {
             String errTimestamp = TIMESTAMP_FORMATTER.format(errTime);
 
             log.error("[AOP] [ERR] [{}] {} {}{} | Duration: {}ms | Exception: {}",
-                    errTimestamp, httpMethod, requestUri, queryString, durationMs, ex.getMessage());
+                    errTimestamp, httpMethod, requestUri, queryString, durationMs, ex.getMessage(), ex);
             throw ex;
         }
 
@@ -65,11 +71,28 @@ public class LoggingAspect {
         String resTimestamp = TIMESTAMP_FORMATTER.format(endTime);
         String responsePayload = formatResponsePayload(result);
 
-        // 2. Log HTTP Response
-        log.info("[AOP] [RES] [{}] {} {}{} | Duration: {}ms | Response: {}",
-                resTimestamp, httpMethod, requestUri, queryString, durationMs, responsePayload);
+        // 2. Log HTTP Response (only DEBUG if polling GET request)
+        if (!isPollEndpoint) {
+            log.info("[AOP] [RES] [{}] {} {}{} | Duration: {}ms | Response: {}",
+                    resTimestamp, httpMethod, requestUri, queryString, durationMs, responsePayload);
+        } else if (log.isDebugEnabled()) {
+            log.debug("[AOP] [RES] [{}] {} {}{} | Duration: {}ms | Response: {}",
+                    resTimestamp, httpMethod, requestUri, queryString, durationMs, responsePayload);
+        }
 
         return result;
+    }
+
+    private boolean isPollingEndpoint(String method, String uri) {
+        if (!"GET".equalsIgnoreCase(method)) return false;
+        if (uri == null) return false;
+        return uri.contains("/api/positions") ||
+               uri.contains("/api/margins") ||
+               uri.contains("/api/system/power") ||
+               uri.contains("/api/accounts") ||
+               uri.contains("/api/orders") ||
+               uri.contains("/api/logs") ||
+               uri.contains("/api/feed");
     }
 
     private HttpServletRequest getHttpServletRequest() {

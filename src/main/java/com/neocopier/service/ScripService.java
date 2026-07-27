@@ -217,7 +217,7 @@ public class ScripService {
         }
 
         String instKey = upstoxService.resolveInstrumentKey(token, scrip);
-        log.info("[ScripService] getOhlcHistory: token={}, symbolParam={}, exchangeParam={}, resolvedInstKey={}",
+        log.debug("[ScripService] getOhlcHistory: token={}, symbolParam={}, exchangeParam={}, resolvedInstKey={}",
                 token, symbolParam, exchangeParam, instKey);
 
         List<Map<String, Object>> upstoxCandles = upstoxService.fetchHistoricalCandles(instKey, timeframe);

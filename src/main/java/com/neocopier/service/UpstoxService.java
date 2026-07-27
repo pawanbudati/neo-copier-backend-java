@@ -340,13 +340,13 @@ public class UpstoxService {
 
                     if (optionContractMap.containsKey(optKey1)) {
                         String matchedKey = optionContractMap.get(optKey1);
-                        log.info("[UpstoxService] Matched Option Contract (key1): {} -> {}", optKey1, matchedKey);
+                        log.debug("[UpstoxService] Matched Option Contract (key1): {} -> {}", optKey1, matchedKey);
                         if (cacheKey != null) instrumentKeyCache.put(cacheKey, matchedKey);
                         return matchedKey;
                     }
                     if (optionContractMap.containsKey(optKey2)) {
                         String matchedKey = optionContractMap.get(optKey2);
-                        log.info("[UpstoxService] Matched Option Contract (key2): {} -> {}", optKey2, matchedKey);
+                        log.debug("[UpstoxService] Matched Option Contract (key2): {} -> {}", optKey2, matchedKey);
                         if (cacheKey != null) instrumentKeyCache.put(cacheKey, matchedKey);
                         return matchedKey;
                     }

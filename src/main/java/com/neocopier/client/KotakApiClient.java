@@ -365,15 +365,15 @@ public class KotakApiClient {
                 builder.GET();
             }
 
-            log.info("[KotakApiClient] [OUTBOUND REQ] {} {} | Body: {}", method, url, jsonBody);
+            log.debug("[KotakApiClient] [OUTBOUND REQ] {} {} | Body: {}", method, url, jsonBody);
 
             HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             String responseBody = response.body();
 
             if (response.statusCode() >= 400) {
-                log.debug("[KotakApiClient] [OUTBOUND RES] {} {} | Status: {} | Body: {}", method, url, response.statusCode(), responseBody);
+                log.warn("[KotakApiClient] [OUTBOUND ERR] {} {} | Status: {} | Body: {}", method, url, response.statusCode(), responseBody);
             } else {
-                log.info("[KotakApiClient] [OUTBOUND RES] {} {} | Status: {} | Body: {}", method, url, response.statusCode(), responseBody);
+                log.debug("[KotakApiClient] [OUTBOUND RES] {} {} | Status: {} | Body: {}", method, url, response.statusCode(), responseBody);
             }
 
             if (responseBody == null || responseBody.trim().isEmpty()) {

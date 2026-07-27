@@ -309,7 +309,7 @@ public class AccountService {
         List<Account> activeAccs = getActiveAccounts();
         if (activeAccs.isEmpty()) return;
 
-        log.info("[Session] Periodic check: validating {} active account sessions...", activeAccs.size());
+        log.debug("[Session] Periodic check: validating {} active account sessions...", activeAccs.size());
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             for (Account acc : activeAccs) {
                 executor.submit(() -> {
