@@ -9,6 +9,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.File;
+import java.nio.file.Files;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -54,10 +56,58 @@ public class UpstoxService {
 
     @PostConstruct
     public void init() {
-        if (initialAccessToken != null && !initialAccessToken.trim().isEmpty()) {
+        loadDotEnvProperties();
+        if (initialAccessToken != null && !initialAccessToken.trim().isEmpty() && (accessToken == null || accessToken.isEmpty())) {
             this.accessToken = initialAccessToken.trim();
-            log.info("[UpstoxService] Initialized with configured access token.");
         }
+        log.info("[UpstoxService] Initialized. Configured: {}, Has Token: {}", isConfigured(), hasValidToken());
+    }
+
+    private void loadDotEnvProperties() {
+        File[] possibleEnvFiles = new File[]{
+                new File(".env"),
+                new File("../.env"),
+                new File("../neo-copier-backend-py/.env")
+        };
+
+        for (File file : possibleEnvFiles) {
+            if (file.exists()) {
+                try {
+                    List<String> lines = Files.readAllLines(file.toPath());
+                    for (String line : lines) {
+                        String trimmed = line.trim();
+                        if (trimmed.isEmpty() || trimmed.startsWith("#")) continue;
+
+                        if (trimmed.startsWith("UPSTOX_API_KEY=")) {
+                            String val = parseEnvValue(trimmed.substring("UPSTOX_API_KEY=".length()));
+                            if (val != null && !val.isEmpty()) apiKey = val;
+                        } else if (trimmed.startsWith("UPSTOX_API_SECRET=")) {
+                            String val = parseEnvValue(trimmed.substring("UPSTOX_API_SECRET=".length()));
+                            if (val != null && !val.isEmpty()) apiSecret = val;
+                        } else if (trimmed.startsWith("UPSTOX_REDIRECT_URI=")) {
+                            String val = parseEnvValue(trimmed.substring("UPSTOX_REDIRECT_URI=".length()));
+                            if (val != null && !val.isEmpty()) redirectUri = val;
+                        } else if (trimmed.startsWith("UPSTOX_ACCESS_TOKEN=")) {
+                            String val = parseEnvValue(trimmed.substring("UPSTOX_ACCESS_TOKEN=".length()));
+                            if (val != null && !val.isEmpty()) accessToken = val;
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("[UpstoxService] Error parsing env file {}: {}", file.getPath(), e.getMessage());
+                }
+            }
+        }
+    }
+
+    private String parseEnvValue(String raw) {
+        if (raw == null) return "";
+        String val = raw.trim();
+        if ((val.startsWith("\"") && val.endsWith("\"")) || (val.startsWith("'") && val.endsWith("'"))) {
+            if (val.length() >= 2) {
+                val = val.substring(1, val.length() - 1);
+            }
+        }
+        return val.trim();
     }
 
     public boolean isConfigured() {
