@@ -76,7 +76,7 @@ public class UpstoxService {
         new Thread(() -> {
             log.info("[UpstoxService] Downloading Upstox Instrument Master CSV in background...");
             try {
-                URL url = URI.create("https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz").toURL();
+                URL url = URI.create("https://assets.upstox.com/market-quote/instruments/exchange/complete.csv.gz").toURL();
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestProperty("User-Agent", "Mozilla/5.0");
                 conn.setConnectTimeout(10000);
@@ -94,11 +94,18 @@ public class UpstoxService {
                             continue;
                         }
                         String[] cols = line.split(",");
-                        if (cols.length >= 2) {
+                        if (cols.length >= 3) {
                             String instKey = cols[0].replace("\"", "").trim();
-                            String tradingSym = cols[1].replace("\"", "").trim().toUpperCase();
-                            if (!tradingSym.isEmpty() && !instKey.isEmpty()) {
-                                symbolToInstrumentKeyMap.put(tradingSym, instKey);
+                            String exchToken = cols[1].replace("\"", "").trim();
+                            String tradingSym = cols[2].replace("\"", "").trim().toUpperCase();
+
+                            if (!instKey.isEmpty()) {
+                                if (!tradingSym.isEmpty()) {
+                                    symbolToInstrumentKeyMap.put(tradingSym, instKey);
+                                }
+                                if (!exchToken.isEmpty()) {
+                                    symbolToInstrumentKeyMap.put(exchToken, instKey);
+                                }
                                 count++;
                             }
                         }
