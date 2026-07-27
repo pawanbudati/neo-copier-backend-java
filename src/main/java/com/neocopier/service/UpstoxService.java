@@ -306,56 +306,61 @@ public class UpstoxService {
             return instrumentKeyCache.get(token);
         }
 
-        String searchStr = (token + " " + (scrip != null ? (scrip.getTradingSymbol() + " " + scrip.getScripRefKey() + " " + scrip.getInstrumentName()) : "")).toUpperCase();
+        // 1. Prioritize direct Master Index map lookup by token, tradingSymbol, scripRefKey, instrumentName
+        List<String> candidates = new ArrayList<>();
+        if (scrip != null) {
+            if (scrip.getTradingSymbol() != null) candidates.add(scrip.getTradingSymbol().trim().toUpperCase());
+            if (scrip.getScripRefKey() != null) candidates.add(scrip.getScripRefKey().trim().toUpperCase());
+            if (scrip.getInstrumentName() != null) candidates.add(scrip.getInstrumentName().trim().toUpperCase());
+        }
+        candidates.add(token.trim().toUpperCase());
 
-        if (searchStr.contains("NIFTY 50") || searchStr.contains("NIFTY50") || searchStr.contains("INDEX NIFTY") || searchStr.equals("NIFTY")) {
-            instrumentKeyCache.put(token, "NSE_INDEX|Nifty 50");
-            return "NSE_INDEX|Nifty 50";
-        }
-        if (searchStr.contains("BANK NIFTY") || searchStr.contains("BANKNIFTY") || searchStr.contains("NIFTY BANK")) {
-            instrumentKeyCache.put(token, "NSE_INDEX|Nifty Bank");
-            return "NSE_INDEX|Nifty Bank";
-        }
-        if (searchStr.contains("FINNIFTY") || searchStr.contains("NIFTY FIN")) {
-            instrumentKeyCache.put(token, "NSE_INDEX|Nifty Fin Service");
-            return "NSE_INDEX|Nifty Fin Service";
-        }
-        if (searchStr.contains("MIDCPNIFTY") || searchStr.contains("NIFTY MID")) {
-            instrumentKeyCache.put(token, "NSE_INDEX|NIFTY MID SELECT");
-            return "NSE_INDEX|NIFTY MID SELECT";
-        }
-        if (searchStr.contains("SENSEX") || searchStr.contains("BSX")) {
-            instrumentKeyCache.put(token, "BSE_INDEX|SENSEX");
-            return "BSE_INDEX|SENSEX";
-        }
-        if (searchStr.contains("BANKEX")) {
-            instrumentKeyCache.put(token, "BSE_INDEX|BANKEX");
-            return "BSE_INDEX|BANKEX";
-        }
-
-        String symbolToLookup = scrip != null ? scrip.getTradingSymbol() : token;
-        if (symbolToLookup == null || symbolToLookup.trim().isEmpty()) {
-            symbolToLookup = scrip != null ? scrip.getScripRefKey() : token;
-        }
-
-        if (symbolToLookup != null) {
-            String symUpper = symbolToLookup.trim().toUpperCase();
-
-            // 1. Check exact match in Upstox Instrument Master map
-            if (symbolToInstrumentKeyMap.containsKey(symUpper)) {
-                String matchedKey = symbolToInstrumentKeyMap.get(symUpper);
-                log.info("[UpstoxService] Matched instrument key in Upstox Master Index: {} -> {}", symUpper, matchedKey);
+        for (String cand : candidates) {
+            if (cand.isEmpty()) continue;
+            if (symbolToInstrumentKeyMap.containsKey(cand)) {
+                String matchedKey = symbolToInstrumentKeyMap.get(cand);
+                log.info("[UpstoxService] Master Index match for candidate '{}': {}", cand, matchedKey);
                 instrumentKeyCache.put(token, matchedKey);
                 return matchedKey;
             }
-
-            // 2. Check clean symbol without -EQ, -BE
-            String cleanSym = symUpper.replaceAll("-(EQ|BE|BZ|SM)$", "");
-            if (symbolToInstrumentKeyMap.containsKey(cleanSym)) {
-                String matchedKey = symbolToInstrumentKeyMap.get(cleanSym);
-                log.info("[UpstoxService] Matched clean instrument key in Upstox Master Index: {} -> {}", cleanSym, matchedKey);
+            String cleanCand = cand.replaceAll("-(EQ|BE|BZ|SM)$", "");
+            if (symbolToInstrumentKeyMap.containsKey(cleanCand)) {
+                String matchedKey = symbolToInstrumentKeyMap.get(cleanCand);
+                log.info("[UpstoxService] Master Index clean match for candidate '{}': {}", cleanCand, matchedKey);
                 instrumentKeyCache.put(token, matchedKey);
                 return matchedKey;
+            }
+        }
+
+        String searchStr = (token + " " + (scrip != null ? (scrip.getTradingSymbol() + " " + scrip.getScripRefKey() + " " + scrip.getInstrumentName()) : "")).toUpperCase();
+        boolean isOptionOrFuture = searchStr.contains("CE") || searchStr.contains("PE") || searchStr.contains("FUT")
+                || (scrip != null && (scrip.getSegment() != null && scrip.getSegment().toUpperCase().contains("FO")));
+
+        // 2. Only match Index keys if NOT an Option or Future contract
+        if (!isOptionOrFuture) {
+            if (searchStr.contains("NIFTY 50") || searchStr.contains("NIFTY50") || searchStr.equals("NIFTY")) {
+                instrumentKeyCache.put(token, "NSE_INDEX|Nifty 50");
+                return "NSE_INDEX|Nifty 50";
+            }
+            if (searchStr.contains("BANK NIFTY") || searchStr.contains("BANKNIFTY") || searchStr.contains("NIFTY BANK")) {
+                instrumentKeyCache.put(token, "NSE_INDEX|Nifty Bank");
+                return "NSE_INDEX|Nifty Bank";
+            }
+            if (searchStr.contains("FINNIFTY") || searchStr.contains("NIFTY FIN")) {
+                instrumentKeyCache.put(token, "NSE_INDEX|Nifty Fin Service");
+                return "NSE_INDEX|Nifty Fin Service";
+            }
+            if (searchStr.contains("MIDCPNIFTY") || searchStr.contains("NIFTY MID")) {
+                instrumentKeyCache.put(token, "NSE_INDEX|NIFTY MID SELECT");
+                return "NSE_INDEX|NIFTY MID SELECT";
+            }
+            if (searchStr.contains("SENSEX") || searchStr.contains("BSX")) {
+                instrumentKeyCache.put(token, "BSE_INDEX|SENSEX");
+                return "BSE_INDEX|SENSEX";
+            }
+            if (searchStr.contains("BANKEX")) {
+                instrumentKeyCache.put(token, "BSE_INDEX|BANKEX");
+                return "BSE_INDEX|BANKEX";
             }
         }
 
@@ -385,7 +390,9 @@ public class UpstoxService {
         String segment = scrip.getSegment() != null ? scrip.getSegment().toUpperCase() : "";
 
         String instKey = null;
-        if ("NFO".equalsIgnoreCase(exchange) || "BFO".equalsIgnoreCase(exchange) || segment.contains("FO") || segment.contains("DERIVATIVE")) {
+        if ("BFO".equalsIgnoreCase(exchange) || (("BSE".equalsIgnoreCase(exchange)) && (segment.contains("FO") || segment.contains("DERIVATIVE") || isOptionOrFuture))) {
+            instKey = "BSE_FO|" + symbol;
+        } else if ("NFO".equalsIgnoreCase(exchange) || segment.contains("FO") || segment.contains("DERIVATIVE") || isOptionOrFuture) {
             instKey = "NSE_FO|" + symbol;
         } else if ("BSE".equalsIgnoreCase(exchange)) {
             String cleanSym = symbol.replaceAll("-(EQ|BE|BZ|SM)$", "");
