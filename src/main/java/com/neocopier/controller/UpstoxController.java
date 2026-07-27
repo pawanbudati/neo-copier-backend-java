@@ -115,12 +115,20 @@ public class UpstoxController {
                 "<h2>" + title + "</h2>" +
                 "<p>" + message + "</p>" +
                 "<div class='btn-group'>" +
-                "<a href='https://pawanbudati.github.io/' class='btn btn-primary'>🚀 Return to Dashboard</a>" +
-                "<button onclick='if(history.length > 1) history.back(); else window.location.href=\"https://pawanbudati.github.io/\";' class='btn btn-secondary'>⬅ Go Back</button>" +
+                "<button onclick='goHome()' class='btn btn-primary'>🚀 Return to Dashboard</button>" +
+                "<button onclick='if(window.opener){ try { window.opener.focus(); window.close(); } catch(e){ goHome(); } } else if(history.length > 1) history.back(); else goHome();' class='btn btn-secondary'>⬅ Go Back</button>" +
                 "</div>" +
                 (isSuccess ? "<div class='timer-text' id='timer'>Auto-redirecting to dashboard in <span id='count'>5</span>s...</div>" : "") +
                 "</div>" +
-                (isSuccess ? "<script>let s=5; setInterval(()=>{ s--; if(document.getElementById('count')) document.getElementById('count').innerText=s; if(s<=0) window.location.href='https://pawanbudati.github.io/'; }, 1000);</script>" : "") +
+                "<script>" +
+                "function goHome() {" +
+                "    if (window.opener && !window.opener.closed) { try { window.opener.focus(); window.close(); return; } catch(e){} }" +
+                "    const ref = document.referrer;" +
+                "    if (ref && ref.startsWith('http')) { window.location.href = ref; return; }" +
+                "    window.location.href = 'https://pawanbudati.github.io/neo-copier/';" +
+                "}" +
+                (isSuccess ? "let s=5; setInterval(()=>{ s--; if(document.getElementById('count')) document.getElementById('count').innerText=s; if(s<=0) goHome(); }, 1000);" : "") +
+                "</script>" +
                 "</body></html>";
     }
 
