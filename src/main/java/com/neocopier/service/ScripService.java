@@ -209,8 +209,8 @@ public class ScripService {
         }
 
         List<Map<String, Object>> history = ohlcHistory.get(token);
-        if (history == null || history.size() < 10) {
-            history = seedHistoricalOhlc(token);
+        if (history == null || history.isEmpty()) {
+            return Collections.emptyList();
         }
 
         long tfSec = switch (timeframe != null ? timeframe : "1m") {
@@ -243,108 +243,6 @@ public class ScripService {
             }
         }
         return new ArrayList<>(bucketMap.values());
-    }
-
-    private synchronized List<Map<String, Object>> seedHistoricalOhlc(String token) {
-        List<Map<String, Object>> history = ohlcHistory.computeIfAbsent(token, k -> new CopyOnWriteArrayList<>());
-        if (history.size() >= 10) {
-            return history;
-        }
-
-        double basePrice = 0.0;
-        double change = 0.0;
-
-        // 1. Check live WebSocket price map first
-        if (webSocketClient != null && webSocketClient.getLastPrices() != null) {
-            Map<String, Object> liveTick = webSocketClient.getLastPrices().get(token);
-            if (liveTick != null) {
-                if (liveTick.get("ltp") instanceof Number num && num.doubleValue() > 0) {
-                    basePrice = num.doubleValue();
-                }
-                if (liveTick.get("change") instanceof Number chg) {
-                    change = chg.doubleValue();
-                }
-            }
-        }
-
-        // 2. Check if transient tick already exists in history
-        if (basePrice <= 0 && !history.isEmpty()) {
-            Map<String, Object> lastBar = history.get(history.size() - 1);
-            if (lastBar.get("close") instanceof Number num && num.doubleValue() > 0) {
-                basePrice = num.doubleValue();
-            }
-        }
-
-        // 3. Fallback to strike price or default
-        if (basePrice <= 0) {
-            Scrip scrip = scripRepository.findByScriptToken(token).orElse(null);
-            if (scrip != null && scrip.getStrikePrice() != null && scrip.getStrikePrice() > 0) {
-                basePrice = scrip.getStrikePrice();
-            } else {
-                basePrice = 100.0;
-            }
-        }
-
-        double startPrice;
-        if (change != 0.0) {
-            startPrice = basePrice - change; // e.g. 225 - (-80) = 305!
-        } else {
-            startPrice = basePrice * 1.04;
-        }
-
-        if (startPrice <= 0) {
-            startPrice = basePrice;
-        }
-
-        long nowSec = System.currentTimeMillis() / 1000;
-        java.time.ZonedDateTime nowIst = java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
-        java.time.ZonedDateTime marketOpen = nowIst.withHour(9).withMinute(15).withSecond(0).withNano(0);
-
-        if (nowIst.isBefore(marketOpen)) {
-            marketOpen = marketOpen.minusDays(1);
-        }
-
-        long startSec = marketOpen.toEpochSecond();
-        long endSec = (nowSec / 60) * 60;
-        if (endSec <= startSec) {
-            endSec = startSec + (180 * 60);
-        }
-
-        long totalBars = Math.max(60, Math.min(375, (endSec - startSec) / 60));
-        startSec = endSec - (totalBars * 60);
-
-        history.clear(); // Clear transient single bar before populating full history
-
-        double step = (basePrice - startPrice) / totalBars;
-        double currPrice = startPrice;
-
-        Random rand = new Random(token.hashCode() ^ startSec);
-
-        for (int i = 0; i < totalBars; i++) {
-            long barTime = startSec + (i * 60);
-            double open = currPrice;
-            double noise = (rand.nextDouble() - 0.48) * (basePrice * 0.003);
-            double close = (i == totalBars - 1) ? basePrice : open + step + noise;
-            if (close <= 0) close = basePrice;
-            double high = Math.max(open, close) + Math.abs(rand.nextDouble() * basePrice * 0.0025);
-            double low = Math.max(0.05, Math.min(open, close) - Math.abs(rand.nextDouble() * basePrice * 0.0025));
-
-            open = Math.round(open * 100.0) / 100.0;
-            high = Math.round(high * 100.0) / 100.0;
-            low = Math.round(low * 100.0) / 100.0;
-            close = Math.round(close * 100.0) / 100.0;
-
-            Map<String, Object> bar = new HashMap<>();
-            bar.put("time", barTime);
-            bar.put("open", open);
-            bar.put("high", high);
-            bar.put("low", low);
-            bar.put("close", close);
-            history.add(bar);
-            currPrice = close;
-        }
-
-        return history;
     }
 
     public Map<String, Object> getScripStatus() {
