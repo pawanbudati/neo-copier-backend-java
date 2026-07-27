@@ -410,7 +410,7 @@ public class UpstoxService {
         String toDateStr = today.format(fmt);
         String fromDateStr = fromDate.format(fmt);
 
-        String encodedKey = URLEncoder.encode(instrumentKey, StandardCharsets.UTF_8);
+        String encodedKey = encodeUriPathParam(instrumentKey);
         String urlWithDates = String.format("https://api.upstox.com/v2/historical-candle/%s/%s/%s/%s",
                 encodedKey, interval, toDateStr, fromDateStr);
         String urlToDateOnly = String.format("https://api.upstox.com/v2/historical-candle/%s/%s/%s",
@@ -431,7 +431,7 @@ public class UpstoxService {
         // Try 3: If instrumentKey was NSE_INDEX|Nifty 50, try fallback key if needed
         if (instrumentKey.contains("Nifty 50")) {
             String altUrl = String.format("https://api.upstox.com/v2/historical-candle/%s/%s/%s",
-                    URLEncoder.encode("NSE_INDEX|Nifty50", StandardCharsets.UTF_8), interval, toDateStr);
+                    encodeUriPathParam("NSE_INDEX|Nifty50"), interval, toDateStr);
             bars = executeHistoricalCandleRequest(altUrl, "NSE_INDEX|Nifty50");
         }
 
@@ -440,7 +440,7 @@ public class UpstoxService {
 
     public Map<String, Object> testHistoricalCandles(String key) {
         String testKey = (key == null || key.trim().isEmpty()) ? "NSE_INDEX|Nifty 50" : key.trim();
-        String encodedKey = URLEncoder.encode(testKey, StandardCharsets.UTF_8);
+        String encodedKey = encodeUriPathParam(testKey);
         String url = String.format("https://api.upstox.com/v2/historical-candle/%s/1minute/%s/%s",
                 encodedKey,
                 LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")),
@@ -467,6 +467,12 @@ public class UpstoxService {
         } catch (Exception e) {
             return Map.of("error", e.getMessage());
         }
+    }
+
+    private String encodeUriPathParam(String param) {
+        if (param == null) return "";
+        return URLEncoder.encode(param, StandardCharsets.UTF_8)
+                .replace("+", "%20");
     }
 
     private List<Map<String, Object>> executeHistoricalCandleRequest(String url, String instrumentKey) {
