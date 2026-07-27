@@ -122,6 +122,14 @@ public class UpstoxService {
         return accessToken;
     }
 
+    public String getApiKey() {
+        return apiKey;
+    }
+
+    public String getRedirectUri() {
+        return redirectUri;
+    }
+
     public void setAccessToken(String token) {
         if (token != null) {
             this.accessToken = token.trim();

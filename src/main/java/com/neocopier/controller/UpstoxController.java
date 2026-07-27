@@ -33,6 +33,26 @@ public class UpstoxController {
         ));
     }
 
+    @GetMapping("/login")
+    public ResponseEntity<Void> redirectToLogin() {
+        String authUrl = upstoxService.getAuthUrl();
+        if (authUrl == null || authUrl.trim().isEmpty()) {
+            return ResponseEntity.status(400).build();
+        }
+        return ResponseEntity.status(302).header("Location", authUrl).build();
+    }
+
+    @GetMapping("/debug")
+    public ResponseEntity<Map<String, Object>> getDebug() {
+        return ResponseEntity.ok(Map.of(
+                "isConfigured", upstoxService.isConfigured(),
+                "hasToken", upstoxService.hasValidToken(),
+                "apiKeyConfigured", upstoxService.getApiKey() != null && !upstoxService.getApiKey().trim().isEmpty(),
+                "redirectUri", upstoxService.getRedirectUri() != null ? upstoxService.getRedirectUri() : "",
+                "authUrl", upstoxService.getAuthUrl()
+        ));
+    }
+
     @GetMapping("/callback")
     public ResponseEntity<String> handleCallback(@RequestParam(value = "code", required = false) String code,
                                                  @RequestParam(value = "error", required = false) String error) {
