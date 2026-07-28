@@ -203,67 +203,94 @@ public class KotakApiClient {
         List<String> paths = List.of(
                 "/quick/order/rule/ms/place",
                 "/Orders/2.0/quick/order/rule/ms/place",
-                "/quick/order/place",
-                "/orders/v1/place"
+                "/quick/order/place"
         );
+        log.info("[KotakApiClient] placeOrder payload: {}", payload);
         for (String base : getCandidateBaseUrls(account)) {
+            // Try form-encoded jData format for /quick/ endpoints (Kotak Neo SDK format)
             for (String path : paths) {
                 try {
-                    Map<String, Object> res = postRequest(base + path, payload, account);
+                    Map<String, Object> res = postFormRequest(base + path, payload, account);
+                    log.info("[KotakApiClient] placeOrder response from {}{}: {}", base, path, res);
                     if (isValidResponse(res)) {
                         log.info("[KotakApiClient] placeOrder SUCCESS via {}{}", base, path);
                         return res;
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    log.warn("[KotakApiClient] placeOrder failed via {}{}: {}", base, path, e.getMessage());
+                }
+            }
+            // Fallback: try v1 REST API with JSON
+            try {
+                Map<String, Object> res = postRequest(base + "/orders/v1/place", payload, account);
+                log.info("[KotakApiClient] placeOrder response from {}/orders/v1/place: {}", base, res);
+                if (isValidResponse(res)) {
+                    log.info("[KotakApiClient] placeOrder SUCCESS via {}/orders/v1/place", base);
+                    return res;
+                }
+            } catch (Exception e) {
+                log.warn("[KotakApiClient] placeOrder failed via {}/orders/v1/place: {}", base, e.getMessage());
             }
         }
         String baseUrl = getBaseUrl(account);
-        return postRequest(baseUrl + "/quick/order/rule/ms/place", payload, account);
+        return postFormRequest(baseUrl + "/quick/order/rule/ms/place", payload, account);
     }
 
     public Map<String, Object> modifyOrder(Account account, Map<String, Object> payload) {
         List<String> paths = List.of(
                 "/quick/order/rule/ms/modify",
                 "/Orders/2.0/quick/order/rule/ms/modify",
-                "/quick/order/modify",
-                "/orders/v1/modify"
+                "/quick/order/modify"
         );
         for (String base : getCandidateBaseUrls(account)) {
             for (String path : paths) {
                 try {
-                    Map<String, Object> res = postRequest(base + path, payload, account);
+                    Map<String, Object> res = postFormRequest(base + path, payload, account);
                     if (isValidResponse(res)) {
                         log.info("[KotakApiClient] modifyOrder SUCCESS via {}{}", base, path);
                         return res;
                     }
                 } catch (Exception ignored) {}
             }
+            try {
+                Map<String, Object> res = postRequest(base + "/orders/v1/modify", payload, account);
+                if (isValidResponse(res)) {
+                    log.info("[KotakApiClient] modifyOrder SUCCESS via {}/orders/v1/modify", base);
+                    return res;
+                }
+            } catch (Exception ignored) {}
         }
         String baseUrl = getBaseUrl(account);
-        return postRequest(baseUrl + "/quick/order/rule/ms/modify", payload, account);
+        return postFormRequest(baseUrl + "/quick/order/rule/ms/modify", payload, account);
     }
 
     public Map<String, Object> cancelOrder(Account account, String orderId) {
         List<String> paths = List.of(
                 "/quick/order/rule/ms/cancel",
                 "/Orders/2.0/quick/order/rule/ms/cancel",
-                "/quick/order/cancel",
-                "/orders/v1/cancel"
+                "/quick/order/cancel"
         );
         Map<String, Object> payload = Map.of("order_id", orderId, "on", orderId, "no", orderId);
         for (String base : getCandidateBaseUrls(account)) {
             for (String path : paths) {
                 try {
-                    Map<String, Object> res = postRequest(base + path, payload, account);
+                    Map<String, Object> res = postFormRequest(base + path, payload, account);
                     if (isValidResponse(res)) {
                         log.info("[KotakApiClient] cancelOrder SUCCESS via {}{}", base, path);
                         return res;
                     }
                 } catch (Exception ignored) {}
             }
+            try {
+                Map<String, Object> res = postRequest(base + "/orders/v1/cancel", payload, account);
+                if (isValidResponse(res)) {
+                    log.info("[KotakApiClient] cancelOrder SUCCESS via {}/orders/v1/cancel", base);
+                    return res;
+                }
+            } catch (Exception ignored) {}
         }
         String baseUrl = getBaseUrl(account);
-        return postRequest(baseUrl + "/quick/order/rule/ms/cancel", payload, account);
+        return postFormRequest(baseUrl + "/quick/order/rule/ms/cancel", payload, account);
     }
 
     public Map<String, Object> marginRequired(Account account, Map<String, Object> payload) {
@@ -326,18 +353,26 @@ public class KotakApiClient {
     }
 
     private Map<String, Object> getRequest(String url, Account account) {
-        return httpRequest("GET", url, null, account.getConsumerKey(), account.getSid(), account.getNeoToken());
+        return httpRequest("GET", url, null, account.getConsumerKey(), account.getSid(), account.getNeoToken(), false);
     }
 
     private Map<String, Object> postRequest(String url, Object body, Account account) {
-        return httpRequest("POST", url, body, account.getConsumerKey(), account.getSid(), account.getNeoToken());
+        return httpRequest("POST", url, body, account.getConsumerKey(), account.getSid(), account.getNeoToken(), false);
     }
 
     private Map<String, Object> postRequest(String url, Object body, String consumerKey, String sid, String neoToken) {
-        return httpRequest("POST", url, body, consumerKey, sid, neoToken);
+        return httpRequest("POST", url, body, consumerKey, sid, neoToken, false);
     }
 
-    private Map<String, Object> httpRequest(String method, String url, Object body, String consumerKey, String sid, String neoToken) {
+    /**
+     * POST with application/x-www-form-urlencoded and jData=<json> format.
+     * This matches the Kotak Neo Python SDK format for /quick/ endpoints.
+     */
+    private Map<String, Object> postFormRequest(String url, Object body, Account account) {
+        return httpRequest("POST", url, body, account.getConsumerKey(), account.getSid(), account.getNeoToken(), true);
+    }
+
+    private Map<String, Object> httpRequest(String method, String url, Object body, String consumerKey, String sid, String neoToken, boolean useFormEncoding) {
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(url))
@@ -355,17 +390,24 @@ public class KotakApiClient {
             if (neoToken != null && !neoToken.isEmpty()) {
                 builder.header("Auth", neoToken);
             }
-            builder.header("Content-Type", "application/json");
 
-            String jsonBody = "{}";
+            String requestBody = "{}";
             if ("POST".equalsIgnoreCase(method)) {
-                jsonBody = body != null ? objectMapper.writeValueAsString(body) : "{}";
-                builder.POST(HttpRequest.BodyPublishers.ofString(jsonBody));
+                String jsonStr = body != null ? objectMapper.writeValueAsString(body) : "{}";
+                if (useFormEncoding) {
+                    builder.header("Content-Type", "application/x-www-form-urlencoded");
+                    requestBody = "jData=" + java.net.URLEncoder.encode(jsonStr, java.nio.charset.StandardCharsets.UTF_8);
+                } else {
+                    builder.header("Content-Type", "application/json");
+                    requestBody = jsonStr;
+                }
+                builder.POST(HttpRequest.BodyPublishers.ofString(requestBody));
             } else {
+                builder.header("Content-Type", "application/json");
                 builder.GET();
             }
 
-            log.debug("[KotakApiClient] [OUTBOUND REQ] {} {} | Body: {}", method, url, jsonBody);
+            log.debug("[KotakApiClient] [OUTBOUND REQ] {} {} | Body: {}", method, url, requestBody);
 
             HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             String responseBody = response.body();
