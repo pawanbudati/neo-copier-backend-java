@@ -120,6 +120,10 @@ public class KotakApiClient {
             hsServerId = (String) extractFromDataOrMap(res, "hsServerId", "hs_server_id");
             if (neoToken != null) {
                 step2Res = res;
+                String step2Sid = extractSid(res);
+                if (step2Sid != null && !step2Sid.trim().isEmpty()) {
+                    sid = step2Sid.trim();
+                }
                 break;
             } else {
                 step2Res = res;
@@ -332,12 +336,15 @@ public class KotakApiClient {
      * 2. Default NEO_API_BASE (https://mis.kotaksecurities.com)
      */
     private List<String> getCandidateBaseUrls(Account account) {
-        String accountBase = account.getBaseUrl();
-        if (accountBase != null && !accountBase.trim().isEmpty()) {
-            return List.of(accountBase.trim().replaceAll("/+$", ""));
+        List<String> urls = new java.util.ArrayList<>();
+        if (account != null && account.getBaseUrl() != null && !account.getBaseUrl().trim().isEmpty()) {
+            urls.add(account.getBaseUrl().trim().replaceAll("/+$", ""));
         }
         String defBase = defaultBaseUrl.replaceAll("/+$", "");
-        return List.of(defBase);
+        if (!urls.contains(defBase)) urls.add(defBase);
+        if (!urls.contains("https://e21.kotaksecurities.com")) urls.add("https://e21.kotaksecurities.com");
+        if (!urls.contains("https://mis.kotaksecurities.com")) urls.add("https://mis.kotaksecurities.com");
+        return urls;
     }
 
     private boolean isValidResponse(Map<String, Object> res) {
@@ -492,13 +499,11 @@ public class KotakApiClient {
 
             if (sid != null && !sid.isEmpty()) {
                 builder.header("sid", sid);
-                builder.header("Sid", sid);
             }
 
             String activeAuthToken = (neoToken != null && !neoToken.isEmpty()) ? neoToken : consumerKey;
             if (activeAuthToken != null && !activeAuthToken.isEmpty()) {
                 builder.header("Auth", activeAuthToken);
-                builder.header("auth", activeAuthToken);
             }
 
             String requestBody = "{}";
