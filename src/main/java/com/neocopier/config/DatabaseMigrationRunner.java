@@ -81,8 +81,11 @@ public class DatabaseMigrationRunner implements ApplicationRunner {
                     try (java.sql.ResultSet rs = metaData.getColumns(null, null, tName, cName)) {
                         if (rs.next()) {
                             String typeName = rs.getString("TYPE_NAME");
-                            if (typeName != null && (typeName.equalsIgnoreCase("text") || typeName.equalsIgnoreCase("clob") || typeName.equalsIgnoreCase("longvarchar"))) {
-                                return true;
+                            if (typeName != null) {
+                                String lower = typeName.toLowerCase();
+                                if (lower.contains("text") || lower.contains("varchar") || lower.contains("char") || lower.contains("clob") || lower.contains("string")) {
+                                    return true;
+                                }
                             }
                         }
                     }
