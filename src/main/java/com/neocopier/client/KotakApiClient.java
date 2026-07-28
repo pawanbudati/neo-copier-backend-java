@@ -151,6 +151,10 @@ public class KotakApiClient {
             List<String> postPaths = List.of("/quick/user/limits", "/Orders/2.0/quick/user/limits");
             for (String path : postPaths) {
                 try {
+                    Map<String, Object> res = postFormRequest(base + path, body, account);
+                    if (isValidResponse(res)) return res;
+                } catch (Exception ignored) {}
+                try {
                     Map<String, Object> res = postRequest(base + path, body, account);
                     if (isValidResponse(res)) return res;
                 } catch (Exception ignored) {}
@@ -360,15 +364,15 @@ public class KotakApiClient {
     }
 
     private Map<String, Object> getRequest(String url, Account account) {
-        return httpRequest("GET", url, null, getAuthToken(account), account.getSid(), account.getNeoToken(), false);
+        return httpRequest("GET", url, null, account, false, false);
     }
 
     private Map<String, Object> postRequest(String url, Object body, Account account) {
-        return httpRequest("POST", url, body, getAuthToken(account), account.getSid(), account.getNeoToken(), false);
+        return httpRequest("POST", url, body, account, false, false);
     }
 
     private Map<String, Object> postRequest(String url, Object body, String consumerKey, String sid, String neoToken) {
-        return httpRequest("POST", url, body, consumerKey, sid, neoToken, false);
+        return httpRequestDirect("POST", url, body, consumerKey, sid, neoToken, false);
     }
 
     /**
@@ -376,10 +380,63 @@ public class KotakApiClient {
      * This matches the Kotak Neo Python SDK format for /quick/ endpoints.
      */
     private Map<String, Object> postFormRequest(String url, Object body, Account account) {
-        return httpRequest("POST", url, body, getAuthToken(account), account.getSid(), account.getNeoToken(), true);
+        return httpRequest("POST", url, body, account, true, false);
     }
 
-    private Map<String, Object> httpRequest(String method, String url, Object body, String consumerKey, String sid, String neoToken, boolean useFormEncoding) {
+    private Map<String, Object> httpRequest(String method, String url, Object body, Account account, boolean useFormEncoding, boolean isRetry) {
+        String token = getAuthToken(account);
+        String sid = account != null ? account.getSid() : null;
+        String neoToken = account != null ? account.getNeoToken() : null;
+
+        Map<String, Object> res = httpRequestDirect(method, url, body, token, sid, neoToken, useFormEncoding);
+
+        if (!isRetry && account != null && isSessionInvalidResponse(res)) {
+            if (attemptAutoRelogin(account)) {
+                String freshToken = getAuthToken(account);
+                return httpRequestDirect(method, url, body, freshToken, account.getSid(), account.getNeoToken(), useFormEncoding);
+            }
+        }
+        return res;
+    }
+
+    private boolean isSessionInvalidResponse(Map<String, Object> res) {
+        if (res == null) return false;
+        String raw = (String) res.get("raw");
+        if (raw != null && (raw.contains("invalid session token") || raw.contains("100022"))) return true;
+        String errMsg = (String) res.get("errMsg");
+        if (errMsg != null && errMsg.contains("invalid session token")) return true;
+        String error = (String) res.get("error");
+        if (error != null && error.contains("invalid session token")) return true;
+        return false;
+    }
+
+    private boolean attemptAutoRelogin(Account account) {
+        if (account == null) return false;
+        String totpSecret = account.getTotpSecret();
+        String mpin = account.getMpin();
+        if (totpSecret == null || totpSecret.trim().isEmpty() || mpin == null || mpin.trim().isEmpty()) {
+            return false;
+        }
+        try {
+            log.info("[KotakApiClient] Session expired/invalid for {}. Auto-reauthenticating...", account.getNickname());
+            Map<String, Object> auth = authenticate(account, null);
+            if (Boolean.TRUE.equals(auth.get("success"))) {
+                account.setAccessToken((String) auth.get("accessToken"));
+                account.setSid((String) auth.get("sid"));
+                account.setNeoToken((String) auth.get("neoToken"));
+                if (auth.get("baseUrl") != null) account.setBaseUrl((String) auth.get("baseUrl"));
+                account.setStatus("active");
+                account.setErrorMessage(null);
+                log.info("[KotakApiClient] Auto-reauthentication SUCCESS for {}", account.getNickname());
+                return true;
+            }
+        } catch (Exception e) {
+            log.warn("[KotakApiClient] Auto-reauthentication failed for {}: {}", account.getNickname(), e.getMessage());
+        }
+        return false;
+    }
+
+    private Map<String, Object> httpRequestDirect(String method, String url, Object body, String consumerKey, String sid, String neoToken, boolean useFormEncoding) {
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(url))
@@ -420,7 +477,7 @@ public class KotakApiClient {
             String responseBody = response.body();
 
             if (response.statusCode() >= 400) {
-                log.warn("[KotakApiClient] [OUTBOUND ERR] {} {} | Status: {} | Body: {}", method, url, response.statusCode(), responseBody);
+                log.debug("[KotakApiClient] [OUTBOUND ERR] {} {} | Status: {} | Body: {}", method, url, response.statusCode(), responseBody);
             } else {
                 log.debug("[KotakApiClient] [OUTBOUND RES] {} {} | Status: {} | Body: {}", method, url, response.statusCode(), responseBody);
             }
