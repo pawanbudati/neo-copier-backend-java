@@ -399,6 +399,11 @@ public class KotakApiClient {
         return res;
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.neocopier.repository.AccountRepository accountRepository;
+
+    private final Map<String, Long> lastAutoReloginMap = new java.util.concurrent.ConcurrentHashMap<>();
+
     private boolean isSessionInvalidResponse(Map<String, Object> res) {
         if (res == null) return false;
         String raw = (String) res.get("raw");
@@ -411,12 +416,21 @@ public class KotakApiClient {
     }
 
     private boolean attemptAutoRelogin(Account account) {
-        if (account == null) return false;
+        if (account == null || account.getId() == null) return false;
         String totpSecret = account.getTotpSecret();
         String mpin = account.getMpin();
         if (totpSecret == null || totpSecret.trim().isEmpty() || mpin == null || mpin.trim().isEmpty()) {
             return false;
         }
+
+        // Throttle auto-relogin to at most once every 60 seconds per account
+        long now = System.currentTimeMillis();
+        Long lastTime = lastAutoReloginMap.get(account.getId());
+        if (lastTime != null && (now - lastTime) < 60_000) {
+            return false;
+        }
+        lastAutoReloginMap.put(account.getId(), now);
+
         try {
             log.info("[KotakApiClient] Session expired/invalid for {}. Auto-reauthenticating...", account.getNickname());
             Map<String, Object> auth = authenticate(account, null);
@@ -426,8 +440,15 @@ public class KotakApiClient {
                 account.setNeoToken((String) auth.get("neoToken"));
                 if (auth.get("baseUrl") != null) account.setBaseUrl((String) auth.get("baseUrl"));
                 account.setStatus("active");
+                account.setLastLogin(java.time.LocalDateTime.now().toString());
                 account.setErrorMessage(null);
-                log.info("[KotakApiClient] Auto-reauthentication SUCCESS for {}", account.getNickname());
+
+                if (accountRepository != null) {
+                    accountRepository.save(account);
+                    log.info("[KotakApiClient] Auto-reauthentication SUCCESS for {} (saved new tokens to DB)", account.getNickname());
+                } else {
+                    log.info("[KotakApiClient] Auto-reauthentication SUCCESS for {}", account.getNickname());
+                }
                 return true;
             }
         } catch (Exception e) {
