@@ -144,7 +144,7 @@ public class KotakApiClient {
         res.put("rid", extractFromDataOrMap(step2Res, "rid", "edit_rid"));
         res.put("hsServerId", hsServerId);
         res.put("dataCenter", extractFromDataOrMap(step2Res, "dataCenter", "data_center"));
-        res.put("baseUrl", workingBaseUrl);
+        res.put("baseUrl", "https://e21.kotaksecurities.com");
         return res;
     }
 
@@ -337,12 +337,13 @@ public class KotakApiClient {
      */
     private List<String> getCandidateBaseUrls(Account account) {
         List<String> urls = new java.util.ArrayList<>();
+        urls.add("https://e21.kotaksecurities.com");
         if (account != null && account.getBaseUrl() != null && !account.getBaseUrl().trim().isEmpty()) {
-            urls.add(account.getBaseUrl().trim().replaceAll("/+$", ""));
+            String b = account.getBaseUrl().trim().replaceAll("/+$", "");
+            if (!urls.contains(b)) urls.add(b);
         }
         String defBase = defaultBaseUrl.replaceAll("/+$", "");
         if (!urls.contains(defBase)) urls.add(defBase);
-        if (!urls.contains("https://e21.kotaksecurities.com")) urls.add("https://e21.kotaksecurities.com");
         if (!urls.contains("https://mis.kotaksecurities.com")) urls.add("https://mis.kotaksecurities.com");
         return urls;
     }
