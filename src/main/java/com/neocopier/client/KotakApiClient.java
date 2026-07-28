@@ -402,16 +402,28 @@ public class KotakApiClient {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.neocopier.repository.AccountRepository accountRepository;
 
-    private final Map<String, Long> lastAutoReloginMap = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, Long> lastFailedAutoReloginMap = new java.util.concurrent.ConcurrentHashMap<>();
 
     private boolean isSessionInvalidResponse(Map<String, Object> res) {
-        if (res == null) return false;
+        if (res == null || res.isEmpty()) return false;
         String raw = (String) res.get("raw");
-        if (raw != null && (raw.contains("invalid session token") || raw.contains("100022"))) return true;
+        if (raw != null && (raw.contains("invalid session token") || raw.contains("100022") || raw.contains("neo-login-check-api"))) return true;
+        
         String errMsg = (String) res.get("errMsg");
-        if (errMsg != null && errMsg.contains("invalid session token")) return true;
+        if (errMsg != null && (errMsg.toLowerCase().contains("invalid session token") || errMsg.toLowerCase().contains("session expired") || errMsg.toLowerCase().contains("neo-login-check-api"))) return true;
+        
         String error = (String) res.get("error");
-        if (error != null && error.contains("invalid session token")) return true;
+        if (error != null && (error.toLowerCase().contains("invalid session token") || error.toLowerCase().contains("session expired") || error.toLowerCase().contains("neo-login-check-api"))) return true;
+        
+        String message = (String) res.get("message");
+        if (message != null && (message.toLowerCase().contains("invalid session token") || message.toLowerCase().contains("session expired"))) return true;
+
+        Object stCode = res.get("stCode");
+        if (stCode != null && ("100022".equals(stCode.toString()) || Integer.valueOf(100022).equals(stCode))) return true;
+
+        String stat = (String) res.get("stat");
+        if (stat != null && stat.toLowerCase().contains("neo-login-check-api")) return true;
+
         return false;
     }
 
@@ -423,13 +435,14 @@ public class KotakApiClient {
             return false;
         }
 
-        // Throttle auto-relogin to at most once every 60 seconds per account
+        // Throttle auto-relogin ONLY if authentication FAILED recently (within 15 seconds)
+        // to prevent hammering Kotak API with bad credentials.
         long now = System.currentTimeMillis();
-        Long lastTime = lastAutoReloginMap.get(account.getId());
-        if (lastTime != null && (now - lastTime) < 60_000) {
+        Long lastFailedTime = lastFailedAutoReloginMap.get(account.getId());
+        if (lastFailedTime != null && (now - lastFailedTime) < 15_000) {
+            log.warn("[KotakApiClient] Skipping auto-relogin for {} - recent login failed {}ms ago", account.getNickname(), now - lastFailedTime);
             return false;
         }
-        lastAutoReloginMap.put(account.getId(), now);
 
         try {
             log.info("[KotakApiClient] Session expired/invalid for {}. Auto-reauthenticating...", account.getNickname());
@@ -443,6 +456,8 @@ public class KotakApiClient {
                 account.setLastLogin(java.time.LocalDateTime.now().toString());
                 account.setErrorMessage(null);
 
+                lastFailedAutoReloginMap.remove(account.getId());
+
                 if (accountRepository != null) {
                     accountRepository.save(account);
                     log.info("[KotakApiClient] Auto-reauthentication SUCCESS for {} (saved new tokens to DB)", account.getNickname());
@@ -453,6 +468,7 @@ public class KotakApiClient {
             }
         } catch (Exception e) {
             log.warn("[KotakApiClient] Auto-reauthentication failed for {}: {}", account.getNickname(), e.getMessage());
+            lastFailedAutoReloginMap.put(account.getId(), now);
         }
         return false;
     }
