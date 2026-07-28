@@ -433,14 +433,14 @@ public class TradingService {
         );
 
         Map<String, Object> limits = kotakApiClient.getLimits(acc);
-        double netMargin = parseDouble(limits.get("Net"), limits.get("net"));
+        double netMargin = extractMarginValue(limits, "Net", "net", "AvailableMargin", "availableMargin", "Cash", "cash", "payin");
         double reqMargin = accQty * priceVal;
 
         try {
             Map<String, Object> res = kotakApiClient.marginRequired(acc, sdkPayload);
-            Object mVal = res.get("marginRequired");
-            if (mVal != null && mVal.toString().matches("\\d+(\\.\\d+)?")) {
-                reqMargin = Double.parseDouble(mVal.toString());
+            double mVal = extractMarginValue(res, "marginRequired", "requiredMargin", "margin", "totalMarginRequired");
+            if (mVal > 0) {
+                reqMargin = mVal;
             }
         } catch (Exception ignored) {}
 
@@ -454,6 +454,39 @@ public class TradingService {
         res.put("availableMargin", netMargin);
         res.put("sufficient", netMargin >= reqMargin);
         return res;
+    }
+
+    @SuppressWarnings("unchecked")
+    private double extractMarginValue(Map<String, Object> limits, String... keys) {
+        if (limits == null || limits.isEmpty()) return 0.0;
+
+        List<Map<String, Object>> searchMaps = new ArrayList<>();
+        searchMaps.add(limits);
+
+        Object dataObj = limits.get("data");
+        if (dataObj instanceof Map<?, ?> dataMap) {
+            searchMaps.add(0, (Map<String, Object>) dataMap);
+        } else if (dataObj instanceof List<?> list) {
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> itemMap) {
+                    searchMaps.add((Map<String, Object>) itemMap);
+                }
+            }
+        }
+
+        for (Map<String, Object> map : searchMaps) {
+            for (String key : keys) {
+                Object val = map.get(key);
+                if (val != null && !val.toString().trim().isEmpty()) {
+                    try {
+                        double d = Double.parseDouble(val.toString().trim());
+                        if (!Double.isNaN(d)) return d;
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+        }
+
+        return 0.0;
     }
 
     private String getExchangeForInstrument(String instrument) {

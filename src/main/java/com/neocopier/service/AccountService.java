@@ -209,16 +209,16 @@ public class AccountService {
                         res.put("role", acc.getRole());
                         try {
                             Map<String, Object> limits = kotakApiClient.getLimits(acc);
-                            double net = parseDouble(limits.get("Net"), limits.get("net"));
-                            double marginUsed = parseDouble(limits.get("MarginUsed"), limits.get("marginUsed"));
-                            double collateral = Math.max(0, parseDouble(limits.get("CollateralValue"), limits.get("collateralValue")));
+                            double net = extractMarginValue(limits, "Net", "net", "AvailableMargin", "availableMargin", "Cash", "cash", "payin");
+                            double marginUsed = extractMarginValue(limits, "MarginUsed", "marginUsed", "utilMargin", "utilisedMargin");
+                            double collateral = Math.max(0, extractMarginValue(limits, "CollateralValue", "collateralValue", "collateral"));
 
                             res.put("cashBalance", net + marginUsed - collateral);
                             res.put("utilMargin", marginUsed);
                             res.put("availableMargin", net);
                             res.put("collateral", collateral);
-                            res.put("realizedPL", parseDouble(limits.get("RealizedMtomPrsnt"), limits.get("realizedMtomPrsnt")));
-                            res.put("unrealizedPL", parseDouble(limits.get("UnrealizedMtomPrsnt"), limits.get("unrealizedMtomPrsnt")));
+                            res.put("realizedPL", extractMarginValue(limits, "RealizedMtomPrsnt", "realizedMtomPrsnt", "realizedPL", "realizedPnl"));
+                            res.put("unrealizedPL", extractMarginValue(limits, "UnrealizedMtomPrsnt", "unrealizedMtomPrsnt", "unrealizedPL", "unrealizedPnl"));
                         } catch (Exception e) {
                             res.put("error", e.getMessage());
                             res.put("availableMargin", 0.0);
@@ -229,6 +229,39 @@ public class AccountService {
 
             return futures.stream().map(CompletableFuture::join).toList();
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    public double extractMarginValue(Map<String, Object> limits, String... keys) {
+        if (limits == null || limits.isEmpty()) return 0.0;
+
+        List<Map<String, Object>> searchMaps = new ArrayList<>();
+        searchMaps.add(limits);
+
+        Object dataObj = limits.get("data");
+        if (dataObj instanceof Map<?, ?> dataMap) {
+            searchMaps.add(0, (Map<String, Object>) dataMap);
+        } else if (dataObj instanceof List<?> list) {
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> itemMap) {
+                    searchMaps.add((Map<String, Object>) itemMap);
+                }
+            }
+        }
+
+        for (Map<String, Object> map : searchMaps) {
+            for (String key : keys) {
+                Object val = map.get(key);
+                if (val != null && !val.toString().trim().isEmpty()) {
+                    try {
+                        double d = Double.parseDouble(val.toString().trim());
+                        if (!Double.isNaN(d)) return d;
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+        }
+
+        return 0.0;
     }
 
     public List<Map<String, Object>> getPositions(ScripService scripService) {
