@@ -352,12 +352,19 @@ public class KotakApiClient {
         return account.getBaseUrl() != null && !account.getBaseUrl().isEmpty() ? account.getBaseUrl() : defaultBaseUrl;
     }
 
+    private String getAuthToken(Account account) {
+        if (account != null && account.getAccessToken() != null && !account.getAccessToken().trim().isEmpty()) {
+            return account.getAccessToken().trim();
+        }
+        return account != null ? account.getConsumerKey() : null;
+    }
+
     private Map<String, Object> getRequest(String url, Account account) {
-        return httpRequest("GET", url, null, account.getConsumerKey(), account.getSid(), account.getNeoToken(), false);
+        return httpRequest("GET", url, null, getAuthToken(account), account.getSid(), account.getNeoToken(), false);
     }
 
     private Map<String, Object> postRequest(String url, Object body, Account account) {
-        return httpRequest("POST", url, body, account.getConsumerKey(), account.getSid(), account.getNeoToken(), false);
+        return httpRequest("POST", url, body, getAuthToken(account), account.getSid(), account.getNeoToken(), false);
     }
 
     private Map<String, Object> postRequest(String url, Object body, String consumerKey, String sid, String neoToken) {
@@ -369,7 +376,7 @@ public class KotakApiClient {
      * This matches the Kotak Neo Python SDK format for /quick/ endpoints.
      */
     private Map<String, Object> postFormRequest(String url, Object body, Account account) {
-        return httpRequest("POST", url, body, account.getConsumerKey(), account.getSid(), account.getNeoToken(), true);
+        return httpRequest("POST", url, body, getAuthToken(account), account.getSid(), account.getNeoToken(), true);
     }
 
     private Map<String, Object> httpRequest(String method, String url, Object body, String consumerKey, String sid, String neoToken, boolean useFormEncoding) {
