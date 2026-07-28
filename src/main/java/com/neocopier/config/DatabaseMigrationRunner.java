@@ -23,45 +23,72 @@ public class DatabaseMigrationRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        log.info("[DatabaseMigration] Starting schema migration...");
+        log.info("[DatabaseMigration] Starting schema migration check...");
         int altered = 0;
-        int skipped = 0;
 
         try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement()) {
 
-            altered += alterColumns(stmt, "accounts", new String[]{
+            altered += alterColumns(conn, stmt, "accounts", new String[]{
                     "id", "nickname", "role", "mobilenumber", "ucc", "mpin",
                     "consumerkey", "totpsecret", "status", "lastlogin",
                     "accesstoken", "sid", "neotoken", "rid", "hsserverid",
                     "datacenter", "baseurl", "errormessage", "createdat"
             });
 
-            altered += alterColumns(stmt, "orders", new String[]{
+            altered += alterColumns(conn, stmt, "orders", new String[]{
                     "id", "masterorderid", "accountid", "accountname", "accountrole",
                     "symbol", "instrument", "optiontype", "expiry", "ordertype",
                     "transactiontype", "status", "errormessage"
             });
 
-            skipped = 32 - altered; // total columns across both tables
-            log.info("[DatabaseMigration] Completed. Altered: {} columns, Already TEXT: {} columns", altered, skipped);
+            if (altered > 0) {
+                log.info("[DatabaseMigration] Completed schema migration. Altered {} column(s) to TEXT.", altered);
+            } else {
+                log.info("[DatabaseMigration] Schema is up to date. All columns are already TEXT.");
+            }
         } catch (Exception e) {
             log.warn("[DatabaseMigration] Migration failed: {}", e.getMessage());
         }
     }
 
-    private int alterColumns(Statement stmt, String table, String[] columns) {
+    private int alterColumns(Connection conn, Statement stmt, String table, String[] columns) {
         int count = 0;
-        for (String col : columns) {
-            try {
-                stmt.executeUpdate("ALTER TABLE " + table + " ALTER COLUMN " + col + " TYPE TEXT");
-                log.info("[DatabaseMigration] Altered {}.{} -> TEXT", table, col);
-                count++;
-            } catch (Exception e) {
-                // Column already TEXT, table doesn't exist, or SQLite
-                log.debug("[DatabaseMigration] Skipped {}.{}: {}", table, col, e.getMessage());
+        try {
+            java.sql.DatabaseMetaData metaData = conn.getMetaData();
+            for (String col : columns) {
+                if (isAlreadyText(metaData, table, col)) {
+                    continue;
+                }
+                try {
+                    stmt.executeUpdate("ALTER TABLE " + table + " ALTER COLUMN " + col + " TYPE TEXT");
+                    log.info("[DatabaseMigration] Altered {}.{} -> TEXT", table, col);
+                    count++;
+                } catch (Exception e) {
+                    log.debug("[DatabaseMigration] Skipped {}.{}: {}", table, col, e.getMessage());
+                }
             }
+        } catch (Exception e) {
+            log.warn("[DatabaseMigration] Metadata check error for table {}: {}", table, e.getMessage());
         }
         return count;
+    }
+
+    private boolean isAlreadyText(java.sql.DatabaseMetaData metaData, String table, String col) {
+        try {
+            for (String tName : new String[]{table, table.toLowerCase(), table.toUpperCase()}) {
+                for (String cName : new String[]{col, col.toLowerCase(), col.toUpperCase()}) {
+                    try (java.sql.ResultSet rs = metaData.getColumns(null, null, tName, cName)) {
+                        if (rs.next()) {
+                            String typeName = rs.getString("TYPE_NAME");
+                            if (typeName != null && (typeName.equalsIgnoreCase("text") || typeName.equalsIgnoreCase("clob") || typeName.equalsIgnoreCase("longvarchar"))) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
     }
 }
