@@ -342,10 +342,11 @@ public class KotakApiClient {
 
     private boolean isValidResponse(Map<String, Object> res) {
         if (res == null || res.isEmpty() || res.containsKey("error")) return false;
+        if (isSessionInvalidResponse(res)) return false;
         String raw = (String) res.get("raw");
         if (raw != null && (raw.contains("404") || raw.contains("Not Found") || raw.contains("Cannot POST") || raw.contains("Cannot GET"))) return false;
         String stat = (String) res.get("stat");
-        if ("NotOk".equalsIgnoreCase(stat)) {
+        if ("NotOk".equalsIgnoreCase(stat) || "error".equalsIgnoreCase(stat) || (stat != null && stat.toLowerCase().contains("error"))) {
             String errMsg = (String) res.get("errMsg");
             if (errMsg != null && (errMsg.contains("404") || errMsg.contains("Invalid URL") || errMsg.contains("Not Found"))) return false;
         }
@@ -391,6 +392,7 @@ public class KotakApiClient {
         Map<String, Object> res = httpRequestDirect(method, url, body, token, sid, neoToken, useFormEncoding);
 
         if (!isRetry && account != null && isSessionInvalidResponse(res)) {
+            log.warn("[KotakApiClient] Session invalid response detected on {} {}. Attempting auto-relogin...", method, url);
             if (attemptAutoRelogin(account)) {
                 String freshToken = getAuthToken(account);
                 return httpRequestDirect(method, url, body, freshToken, account.getSid(), account.getNeoToken(), useFormEncoding);
@@ -479,17 +481,24 @@ public class KotakApiClient {
                     .uri(URI.create(url))
                     .timeout(Duration.ofSeconds(15));
 
-            if (consumerKey != null && !consumerKey.isEmpty()) {
+            // Drop 'Authorization' header on non-login v2 endpoints per Kotak Neo v2 spec.
+            // Sending 'Authorization' header on v2 endpoints causes Kotak gateway to reject with "invalid session token".
+            boolean isLoginEndpoint = url.contains("/tradeApiLogin") || url.contains("/tradeApiValidate") || url.contains("/oauth2/");
+            if (isLoginEndpoint && consumerKey != null && !consumerKey.isEmpty()) {
                 builder.header("Authorization", consumerKey);
             }
+
             builder.header("neo-fin-key", "neotradeapi");
 
             if (sid != null && !sid.isEmpty()) {
                 builder.header("sid", sid);
                 builder.header("Sid", sid);
             }
-            if (neoToken != null && !neoToken.isEmpty()) {
-                builder.header("Auth", neoToken);
+
+            String activeAuthToken = (neoToken != null && !neoToken.isEmpty()) ? neoToken : consumerKey;
+            if (activeAuthToken != null && !activeAuthToken.isEmpty()) {
+                builder.header("Auth", activeAuthToken);
+                builder.header("auth", activeAuthToken);
             }
 
             String requestBody = "{}";
